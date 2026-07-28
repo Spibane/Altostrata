@@ -60,6 +60,7 @@ const ui = {
   tagline: el("tagline"),
   age: el<HTMLSelectElement>("age"),
   seen: el<HTMLInputElement>("seen"),
+  liked: el<HTMLInputElement>("liked"),
   dig: el<HTMLButtonElement>("dig"),
   openSettings: el<HTMLButtonElement>("open-settings"),
   progress: el("progress"),
@@ -397,6 +398,7 @@ async function dig(afterMessage?: string): Promise<void> {
       limit: PAGE_SIZE,
       minAgeDays: Number(ui.age.value),
       includeSeen: ui.seen.checked,
+      includeLiked: ui.liked.checked,
       maxPerAuthor: 2,
     });
 
@@ -980,6 +982,7 @@ function showBrowsing(): void {
 
 ui.dig.addEventListener("click", () => void dig());
 ui.age.addEventListener("change", () => void dig());
+ui.liked.addEventListener("change", () => void dig());
 ui.toTop.addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
 
 async function boot(): Promise<void> {

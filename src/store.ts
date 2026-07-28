@@ -103,19 +103,32 @@ function wrap<T>(request: IDBRequest<T>): Promise<T> {
 // ---------------------------------------------------------------------------
 
 let excludedSet: Set<string> | undefined;
+/** Subset of `excludedSet` excluded because of a like, so likes alone can be re-admitted. */
+let likedSet: Set<string> | undefined;
 let seenSet: Set<string> | undefined;
 
-async function loadSets(): Promise<{ excluded: Set<string>; seen: Set<string> }> {
-  if (excludedSet && seenSet) return { excluded: excludedSet, seen: seenSet };
+interface Sets {
+  excluded: Set<string>;
+  liked: Set<string>;
+  seen: Set<string>;
+}
+
+async function loadSets(): Promise<Sets> {
+  if (excludedSet && likedSet && seenSet) {
+    return { excluded: excludedSet, liked: likedSet, seen: seenSet };
+  }
   const db = await openDb();
   const { transaction } = tx(db, ["excluded", "seen"], "readonly");
-  const [excludedKeys, seenKeys] = await Promise.all([
-    wrap(transaction.objectStore("excluded").getAllKeys()),
+  const [excluded, seenKeys] = await Promise.all([
+    wrap(transaction.objectStore("excluded").getAll()) as Promise<
+      Array<{ uri: string; reason: string }>
+    >,
     wrap(transaction.objectStore("seen").getAllKeys()),
   ]);
-  excludedSet = new Set(excludedKeys as string[]);
+  excludedSet = new Set(excluded.map((row) => row.uri));
+  likedSet = new Set(excluded.filter((row) => row.reason === "like").map((row) => row.uri));
   seenSet = new Set(seenKeys as string[]);
-  return { excluded: excludedSet, seen: seenSet };
+  return { excluded: excludedSet, liked: likedSet, seen: seenSet };
 }
 
 // ---------------------------------------------------------------------------
@@ -274,7 +287,7 @@ export async function insertExclusions(
   rows: Array<{ uri: string; reason: string }>,
 ): Promise<number> {
   if (rows.length === 0) return 0;
-  const { excluded } = await loadSets();
+  const { excluded, liked } = await loadSets();
   const db = await openDb();
   const { transaction, done } = tx(db, ["excluded"], "readwrite");
   const store = transaction.objectStore("excluded");
@@ -284,6 +297,7 @@ export async function insertExclusions(
     if (excluded.has(row.uri)) continue;
     store.put(row);
     excluded.add(row.uri);
+    if (row.reason === "like") liked.add(row.uri);
     added += 1;
   }
   await done;
@@ -292,12 +306,13 @@ export async function insertExclusions(
 
 /** Used when a like is undone from inside Strata, so the post becomes findable again. */
 export async function removeExclusion(uri: string): Promise<void> {
-  const { excluded } = await loadSets();
+  const { excluded, liked } = await loadSets();
   const db = await openDb();
   const { transaction, done } = tx(db, ["excluded"], "readwrite");
   transaction.objectStore("excluded").delete(uri);
   await done;
   excluded.delete(uri);
+  liked.delete(uri);
 }
 
 export async function clearExclusions(): Promise<void> {
@@ -306,6 +321,7 @@ export async function clearExclusions(): Promise<void> {
   transaction.objectStore("excluded").clear();
   await done;
   excludedSet = new Set();
+  likedSet = new Set();
 }
 
 // ---------------------------------------------------------------------------
@@ -346,6 +362,8 @@ export interface ShuffleOptions {
   limit: number;
   minAgeDays: number;
   includeSeen: boolean;
+  /** Re-admits posts excluded for a like. Reposts stay excluded regardless. */
+  includeLiked: boolean;
   maxPerAuthor: number;
 }
 
@@ -367,7 +385,7 @@ const SCAN_LIMIT = 40_000;
  * however picked-over the index gets.
  */
 export async function shuffle(options: ShuffleOptions): Promise<ShuffleRow[]> {
-  const { excluded, seen } = await loadSets();
+  const { excluded, liked, seen } = await loadSets();
   const cutoff = new Date(Date.now() - options.minAgeDays * 86_400_000).toISOString();
 
   const db = await openDb();
@@ -395,9 +413,13 @@ export async function shuffle(options: ShuffleOptions): Promise<ShuffleRow[]> {
         scanned += 1;
         const row = cursor.value as PostRow;
 
+        // A like exclusion can be waived; a repost exclusion cannot.
+        const blocked =
+          excluded.has(row.uri) && !(options.includeLiked && liked.has(row.uri));
+
         const ok =
           row.createdAt < cutoff &&
-          !excluded.has(row.uri) &&
+          !blocked &&
           (options.includeSeen || !seen.has(row.uri)) &&
           (perAuthor.get(row.authorDid) ?? 0) < options.maxPerAuthor;
 

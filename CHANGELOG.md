@@ -1,5 +1,14 @@
 # Changelog
 
+### v2.1.2 - 2026-07-28
+
+- Added an "Include liked" toggle that re-admits posts excluded because you liked
+  them, for revisiting favourites. Reposts stay excluded either way, which meant
+  teaching the exclusion store to remember *why* each post was excluded rather
+  than only that it was
+- Stacked the two filter checkboxes into a column sharing the header row, which
+  is narrower than laying them side by side and left the labels spelled out
+
 ### v2.1.1 - 2026-07-28
 
 - Replaced the muddy brass and cream palette with true-neutral darks, crisp white

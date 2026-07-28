@@ -4,7 +4,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-2.1.1-black)]()
+[![Version](https://img.shields.io/badge/version-2.1.2-black)]()
 [![Status](https://img.shields.io/badge/status-Beta-yellow)]()
 [![Changelog](https://img.shields.io/badge/changelog-blue)](./CHANGELOG.md)
 
@@ -90,7 +90,8 @@ Four design consequences worth knowing:
   Post age is irrelevant to selection except for the minimum-age floor.
 - **Excludes anything you liked or reposted**, read from your own repo. Repeat
   runs only scan back to the highest record key already seen, so syncing
-  30,000 likes is expensive once and cheap thereafter.
+  30,000 likes is expensive once and cheap thereafter. Likes can be re-admitted
+  with a toggle when you want to revisit favourites; reposts stay hidden.
 - **Original-quality downloads.** The Download button pulls the actual file the
   artist uploaded via `com.atproto.sync.getBlob` — not the CDN's re-encoded
   JPEG. Transparent PNGs stay transparent and video comes down as the source
@@ -147,6 +148,7 @@ background while you browse.
 | **Dig** | Draw a fresh random page |
 | **Older than** | Minimum age floor; `now` disables it |
 | **Allow repeats** | Include posts already surfaced |
+| **Include liked** | Re-admit posts you liked; reposts stay hidden either way |
 | **Download** | Save the original file for that image or video |
 | **Like / Repost / Bookmark** | Acts on your account; prompts sign-in if needed |
 | **Sign in** | OAuth via Bluesky; nothing is required to browse or download |

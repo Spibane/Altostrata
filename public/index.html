@@ -143,6 +143,19 @@ label.field {
   white-space: nowrap;
 }
 
+/* Stacked rather than side by side: two rows of checkbox fit inside the height
+   the bar already has, and the column is narrower than the two laid out in a
+   line — which is what let the labels stay spelled out. */
+.toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.toggles label.field { font-size: 12.5px; }
+
+.toggles input[type="checkbox"] { width: 14px; height: 14px; }
+
 select, button, input[type="text"] {
   font-family: var(--sans);
   font-size: 13px;
@@ -681,9 +694,14 @@ dialog input[type="text"] { background: var(--ink); }
           <option value="730">2 years</option>
         </select>
       </label>
-      <label class="field">
-        <input type="checkbox" id="seen"> Allow repeats
-      </label>
+      <div class="toggles">
+        <label class="field" title="Include posts that have already been surfaced">
+          <input type="checkbox" id="seen"> Allow repeats
+        </label>
+        <label class="field" title="Include posts you have liked. Reposts stay hidden.">
+          <input type="checkbox" id="liked"> Include liked
+        </label>
+      </div>
       <div class="secondary">
         <button class="ghost" id="open-settings" aria-haspopup="dialog">Index</button>
         <button class="ghost" id="signin" aria-haspopup="dialog">Sign in</button>
