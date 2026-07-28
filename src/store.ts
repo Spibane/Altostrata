@@ -290,6 +290,16 @@ export async function insertExclusions(
   return added;
 }
 
+/** Used when a like is undone from inside Strata, so the post becomes findable again. */
+export async function removeExclusion(uri: string): Promise<void> {
+  const { excluded } = await loadSets();
+  const db = await openDb();
+  const { transaction, done } = tx(db, ["excluded"], "readwrite");
+  transaction.objectStore("excluded").delete(uri);
+  await done;
+  excluded.delete(uri);
+}
+
 export async function clearExclusions(): Promise<void> {
   const db = await openDb();
   const { transaction, done } = tx(db, ["excluded"], "readwrite");

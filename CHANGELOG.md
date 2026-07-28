@@ -1,5 +1,30 @@
 # Changelog
 
+### v2.1.0 - 2026-07-28
+
+- Added optional sign-in with AT Protocol OAuth, so posts can be liked, reposted
+  and bookmarked from inside Strata. Reading, digging and downloading still need
+  no account
+- Added `@atproto/oauth-client-browser` as the project's first runtime
+  dependency, which handles DPoP proofs, PAR, PKCE and token refresh. The bundle
+  grows from about 8 KB to 69 KB gzipped
+- Chose OAuth over app passwords deliberately: no password is ever entered into
+  the page, tokens are DPoP-bound to a non-extractable key, and access is
+  revocable from Bluesky settings — which matters because this is hosted publicly
+- Liking or reposting from Strata writes the post into the exclusion store
+  immediately, so it stops resurfacing without waiting for the next like sync;
+  undoing either removes the exclusion again
+- Hydration switches to the authenticated AppView when signed in, so each card
+  shows whether the reader has already liked, reposted or bookmarked it
+- Routed authenticated requests through the same throttle as anonymous ones, so
+  signing in does not open a second, unmetered request path
+- Added `public/client-metadata.json` for the OAuth client identity, and built
+  loopback client metadata at runtime so local development needs no published
+  client document
+- Renamed the media Save button to Download, to distinguish it from Bookmark
+- Stopped emitting a production sourcemap; it had grown to 1.1 MB of bundled
+  library sources and churned on every build
+
 ### v2.0.0 - 2026-07-28
 
 Rebuilt as a static browser application. There is no longer a server or a

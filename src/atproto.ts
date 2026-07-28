@@ -22,6 +22,15 @@ export function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * Lets the authenticated transport in `session.ts` share this module's queue.
+ * Signing in must not create a second, unmetered request path.
+ */
+export function runThrottled<T>(fn: () => Promise<T>): Promise<T> {
+  requestCount += 1;
+  return throttle(fn);
+}
+
+/**
  * Serialises every outbound call through a single queue with a minimum gap
  * between requests. Concurrency in the crawler is over accounts, not over raw
  * HTTP — this queue is the only place requests actually leave.
@@ -306,19 +315,36 @@ export interface PostView {
   likeCount?: number;
   repostCount?: number;
   replyCount?: number;
+  /** Only populated when hydrated through an authenticated transport. */
+  viewer?: { like?: string; repost?: string; bookmarked?: boolean };
 }
 
+/**
+ * How an XRPC query reaches the AppView. The default is unauthenticated; signing
+ * in swaps in a transport that carries viewer state (whether the reader has
+ * already liked, reposted or bookmarked each post).
+ */
+export interface Transport {
+  get(nsid: string, search: URLSearchParams): Promise<unknown>;
+}
+
+const publicTransport: Transport = {
+  get: (nsid, search) => getJson(`${APPVIEW}/xrpc/${nsid}?${search.toString()}`),
+};
+
 /** getPosts accepts at most 25 URIs per call. Missing URIs mean deleted posts. */
-export async function getPosts(uris: string[], signal?: AbortSignal): Promise<PostView[]> {
+export async function getPosts(
+  uris: string[],
+  transport: Transport = publicTransport,
+): Promise<PostView[]> {
   const out: PostView[] = [];
   for (let i = 0; i < uris.length; i += 25) {
     const chunk = uris.slice(i, i + 25);
     const search = new URLSearchParams();
     for (const uri of chunk) search.append("uris", uri);
-    const data = (await getJson(
-      `${APPVIEW}/xrpc/app.bsky.feed.getPosts?${search.toString()}`,
-      signal,
-    )) as { posts?: PostView[] };
+    const data = (await transport.get("app.bsky.feed.getPosts", search)) as {
+      posts?: PostView[];
+    };
     out.push(...(data.posts ?? []));
   }
   return out;

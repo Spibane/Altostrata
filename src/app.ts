@@ -1,6 +1,22 @@
 import { AbortedError, getPosts, type PostView } from "./atproto.ts";
 import { crawl, type CrawlProgress } from "./crawl.ts";
 import {
+  authedTransport,
+  bookmark,
+  currentAccount,
+  initAuth,
+  isSignedIn,
+  like,
+  PopupBlockedError,
+  repost,
+  signIn,
+  signInRedirect,
+  signOut,
+  unbookmark,
+  unlike,
+  unrepost,
+} from "./session.ts";
+import {
   downloadAllOriginals,
   downloadOriginal,
   extractImages,
@@ -14,7 +30,9 @@ import {
   exportIndex,
   getMeta,
   importIndex,
+  insertExclusions,
   markShown,
+  removeExclusion,
   requestPersistence,
   resetAll,
   resetSeen,
@@ -66,11 +84,33 @@ const ui = {
   resetAll: el<HTMLButtonElement>("reset-all"),
   closeSettings: el<HTMLButtonElement>("close-settings"),
   file: el<HTMLInputElement>("file"),
+  signin: el<HTMLButtonElement>("signin"),
+  who: el("who"),
+  whoHandle: el("who-handle"),
+  signout: el<HTMLButtonElement>("signout"),
+  auth: el<HTMLDialogElement>("auth"),
+  authForm: el<HTMLFormElement>("auth-form"),
+  authHandle: el<HTMLInputElement>("auth-handle"),
+  authGo: el<HTMLButtonElement>("auth-go"),
+  authError: el("auth-error"),
+  authFallback: el("auth-fallback"),
+  authRedirect: el<HTMLButtonElement>("auth-redirect"),
+  authClose: el<HTMLButtonElement>("auth-close"),
 };
 
 let crawlController: AbortController | undefined;
 /** Download targets for what is currently on screen, keyed by post URI. */
 const targets = new Map<string, DownloadTarget>();
+
+interface ActionState {
+  cid: string;
+  likeUri: string | null;
+  repostUri: string | null;
+  bookmarked: boolean;
+}
+
+/** Like/repost/bookmark state for what is on screen, keyed by post URI. */
+const actions = new Map<string, ActionState>();
 
 // ---------------------------------------------------------------------------
 // Formatting
@@ -156,6 +196,12 @@ function toCard(post: PostView, row: ShuffleRow): Card {
   const handle = post.author.handle;
 
   targets.set(post.uri, { uri: post.uri, authorDid: post.author.did, handle, refs });
+  actions.set(post.uri, {
+    cid: post.cid,
+    likeUri: post.viewer?.like ?? null,
+    repostUri: post.viewer?.repost ?? null,
+    bookmarked: post.viewer?.bookmarked ?? false,
+  });
 
   return {
     uri: post.uri,
@@ -191,7 +237,7 @@ function mediaHtml(card: Card): string {
       const grab =
         i < card.originals
           ? `<button class="grab" data-uri="${escapeHtml(card.uri)}" data-index="${i}"
-             title="Download the original file">${card.isVideo ? "Save video" : "Save"}</button>`
+             title="Download the original file">${card.isVideo ? "Download video" : "Download"}</button>`
           : "";
       return `<figure>
         <a href="${escapeHtml(image.full)}" target="_blank" rel="noreferrer">
@@ -203,11 +249,27 @@ function mediaHtml(card: Card): string {
   return `<div class="media n${shown.length}">${items}</div>`;
 }
 
+/**
+ * Rendered whether or not anyone is signed in: clicking while signed out opens
+ * the sign-in dialog, which is more discoverable than hiding the controls.
+ */
+function actionsHtml(card: Card): string {
+  const state = actions.get(card.uri);
+  const button = (act: string, label: string, on: boolean): string =>
+    `<button class="act" data-act="${act}" data-uri="${escapeHtml(card.uri)}" ` +
+    `aria-pressed="${on}">${label}</button>`;
+  return `<span class="acts">
+    ${button("like", "Like", state?.likeUri != null)}
+    ${button("repost", "Repost", state?.repostUri != null)}
+    ${button("bookmark", "Bookmark", state?.bookmarked === true)}
+  </span>`;
+}
+
 function cardHtml(card: Card): string {
   const extra = card.images.length > 4 ? `+${card.images.length - 4} more` : "";
   const saveAll =
     card.originals > 1
-      ? `<button data-all="${escapeHtml(card.uri)}">Save all ${card.originals} originals</button>`
+      ? `<button data-all="${escapeHtml(card.uri)}">Download all ${card.originals}</button>`
       : "";
   return `<article class="find">
     ${gaugeHtml(card)}
@@ -224,6 +286,7 @@ function cardHtml(card: Card): string {
         <span>${card.likeCount} likes</span>
         ${card.isVideo ? '<span class="badge">video</span>' : ""}
         ${extra ? `<span>${escapeHtml(extra)}</span>` : ""}
+        ${actionsHtml(card)}
         ${saveAll}
         <a href="${escapeHtml(card.webUrl)}" target="_blank" rel="noreferrer">Open on Bluesky &rarr;</a>
       </footer>
@@ -258,7 +321,12 @@ async function dig(afterMessage?: string): Promise<void> {
     }
 
     const byUri = new Map(rows.map((row) => [row.uri, row]));
-    const hydrated = await getPosts(rows.map((row) => row.uri));
+    // Signed in, hydration goes through the authenticated AppView so each card
+    // knows whether this reader has already liked, reposted or bookmarked it.
+    const hydrated = await getPosts(
+      rows.map((row) => row.uri),
+      isSignedIn() ? authedTransport : undefined,
+    );
 
     // Anything the AppView no longer knows about has been deleted upstream.
     const returned = new Set(hydrated.map((post) => post.uri));
@@ -266,6 +334,7 @@ async function dig(afterMessage?: string): Promise<void> {
     if (missing.length > 0) await deletePosts(missing);
 
     targets.clear();
+    actions.clear();
     const cards = hydrated.flatMap((post) => {
       const row = byUri.get(post.uri);
       if (!row) return [];
@@ -360,6 +429,79 @@ async function handleGrabAll(button: HTMLButtonElement): Promise<void> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Interactions
+// ---------------------------------------------------------------------------
+
+/**
+ * Liking from inside Strata writes the post into the exclusion store too, so it
+ * stops resurfacing immediately rather than waiting for the next like sync.
+ * Undoing the like removes the exclusion again.
+ */
+async function applyAction(button: HTMLButtonElement): Promise<void> {
+  const act = button.dataset.act;
+  const uri = button.dataset.uri;
+  if (!act || !uri) return;
+
+  if (!isSignedIn()) {
+    openAuth();
+    return;
+  }
+
+  const state = actions.get(uri);
+  if (!state) return;
+
+  const label = button.textContent?.trim() ?? "";
+  button.dataset.busy = "1";
+  button.disabled = true;
+  delete button.dataset.failed;
+
+  try {
+    if (act === "like") {
+      if (state.likeUri) {
+        await unlike(state.likeUri);
+        state.likeUri = null;
+        await removeExclusion(uri);
+      } else {
+        state.likeUri = await like({ uri, cid: state.cid });
+        await insertExclusions([{ uri, reason: "like" }]);
+      }
+      button.setAttribute("aria-pressed", String(state.likeUri !== null));
+    } else if (act === "repost") {
+      if (state.repostUri) {
+        await unrepost(state.repostUri);
+        state.repostUri = null;
+        await removeExclusion(uri);
+      } else {
+        state.repostUri = await repost({ uri, cid: state.cid });
+        await insertExclusions([{ uri, reason: "repost" }]);
+      }
+      button.setAttribute("aria-pressed", String(state.repostUri !== null));
+    } else if (act === "bookmark") {
+      if (state.bookmarked) {
+        await unbookmark(uri);
+        state.bookmarked = false;
+      } else {
+        await bookmark({ uri, cid: state.cid });
+        state.bookmarked = true;
+      }
+      button.setAttribute("aria-pressed", String(state.bookmarked));
+    }
+  } catch (err) {
+    button.dataset.failed = "1";
+    button.textContent = "Failed";
+    const message = err instanceof Error ? err.message : String(err);
+    ui.note.innerHTML = `<strong>That didn't go through.</strong> ${escapeHtml(message)}`;
+    setTimeout(() => {
+      button.textContent = label;
+      delete button.dataset.failed;
+    }, 3000);
+  } finally {
+    delete button.dataset.busy;
+    button.disabled = false;
+  }
+}
+
 ui.results.addEventListener("click", (event) => {
   const node = event.target;
   if (!(node instanceof HTMLElement)) return;
@@ -368,8 +510,84 @@ ui.results.addEventListener("click", (event) => {
     void handleGrab(grab);
     return;
   }
+  const act = node.closest<HTMLButtonElement>("button.act");
+  if (act) {
+    void applyAction(act);
+    return;
+  }
   const all = node.closest<HTMLButtonElement>("button[data-all]");
   if (all) void handleGrabAll(all);
+});
+
+// ---------------------------------------------------------------------------
+// Auth UI
+// ---------------------------------------------------------------------------
+
+function reflectAccount(): void {
+  const account = currentAccount();
+  if (account) {
+    ui.signin.hidden = true;
+    ui.who.hidden = false;
+    ui.whoHandle.textContent = `@${account.handle}`;
+  } else {
+    ui.signin.hidden = false;
+    ui.who.hidden = true;
+    ui.whoHandle.textContent = "";
+  }
+}
+
+function openAuth(): void {
+  ui.authError.hidden = true;
+  ui.authFallback.hidden = true;
+  void getMeta("owner_handle").then((owner) => {
+    if (owner && !ui.authHandle.value) ui.authHandle.value = owner;
+  });
+  ui.auth.showModal();
+}
+
+ui.signin.addEventListener("click", openAuth);
+ui.authClose.addEventListener("click", () => ui.auth.close());
+
+ui.authForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const input = ui.authHandle.value.trim();
+  if (!input) return;
+
+  ui.authError.hidden = true;
+  ui.authFallback.hidden = true;
+  ui.authGo.disabled = true;
+  ui.authGo.textContent = "Waiting for Bluesky";
+
+  try {
+    await signIn(input);
+    ui.auth.close();
+    reflectAccount();
+    // Re-hydrate so the buttons reflect real viewer state rather than blanks.
+    await dig("<strong>Signed in.</strong> Likes, reposts and bookmarks are live.");
+  } catch (err) {
+    ui.authError.hidden = false;
+    ui.authError.textContent =
+      err instanceof PopupBlockedError
+        ? "The sign-in window was blocked or closed."
+        : err instanceof Error
+          ? err.message
+          : String(err);
+    ui.authFallback.hidden = false;
+  } finally {
+    ui.authGo.disabled = false;
+    ui.authGo.textContent = "Continue";
+  }
+});
+
+ui.authRedirect.addEventListener("click", () => {
+  const input = ui.authHandle.value.trim();
+  if (input) void signInRedirect(input);
+});
+
+ui.signout.addEventListener("click", async () => {
+  await signOut();
+  reflectAccount();
+  await dig("<strong>Signed out.</strong> Reading and downloads still work.");
 });
 
 // ---------------------------------------------------------------------------
@@ -660,6 +878,11 @@ ui.age.addEventListener("change", () => void dig());
 
 async function boot(): Promise<void> {
   void requestPersistence();
+
+  // Runs before the first dig so hydration can carry viewer state, and because a
+  // redirect callback has to be consumed out of the URL early.
+  await initAuth();
+  reflectAccount();
 
   let s: Stats;
   try {

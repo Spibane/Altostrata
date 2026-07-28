@@ -15,6 +15,10 @@ data/
 .env.*.local
 !.env.example
 
+# Dev-only sourcemap. public/app.js is committed; the map is 1.1 MB of library
+# sources and would churn on every build.
+public/app.js.map
+
 # Logs and diagnostics
 *.log
 npm-debug.log*

@@ -4,13 +4,14 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-2.0.0-black)]()
+[![Version](https://img.shields.io/badge/version-2.1.0-black)]()
 [![Status](https://img.shields.io/badge/status-Beta-yellow)]()
 [![Changelog](https://img.shields.io/badge/changelog-blue)](./CHANGELOG.md)
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)]()
 [![esbuild](https://img.shields.io/badge/esbuild-0.28-FFCF00?logo=esbuild&logoColor=black)]()
 [![IndexedDB](https://img.shields.io/badge/IndexedDB-local-4A5568)]()
+[![OAuth](https://img.shields.io/badge/OAuth-DPoP-6E56CF)]()
 [![No backend](https://img.shields.io/badge/backend-none-success)]()
 
 </div>
@@ -50,10 +51,23 @@ APIs and keeps its index in IndexedDB.
                                                  the artist's original upload
 ```
 
-Everything upstream is read through the public AppView at
-`public.api.bsky.app` plus `plc.directory` for PDS discovery. **No
-authentication anywhere** — follows, author feeds, likes, and reposts are all
-public records on the AT Protocol, so there is no app password to store.
+Reading needs no account at all: follows, author feeds, likes and reposts are
+public AT Protocol records, read through `public.api.bsky.app` plus
+`plc.directory` for PDS discovery.
+
+**Liking, reposting and bookmarking are opt-in and use OAuth.** No password is
+ever typed into Strata — you are sent to Bluesky to approve access, and tokens
+come back DPoP-bound to a non-extractable key held in this browser:
+
+```
+   Sign in ──► bsky.social /oauth/par ──► /oauth/authorize
+                                              │  you approve, on Bluesky
+                                              ▼
+                             DPoP-bound tokens ──► IndexedDB
+                                              │
+   Like / Repost ──► your PDS  com.atproto.repo.createRecord
+   Bookmark ──────► your PDS ──proxy──► AppView  app.bsky.bookmark.*
+```
 
 Four design consequences worth knowing:
 
@@ -77,10 +91,13 @@ Four design consequences worth knowing:
 - **Excludes anything you liked or reposted**, read from your own repo. Repeat
   runs only scan back to the highest record key already seen, so syncing
   30,000 likes is expensive once and cheap thereafter.
-- **Original-quality downloads.** The Save button pulls the actual file the
+- **Original-quality downloads.** The Download button pulls the actual file the
   artist uploaded via `com.atproto.sync.getBlob` — not the CDN's re-encoded
   JPEG. Transparent PNGs stay transparent and video comes down as the source
   MP4 rather than an HLS playlist.
+- **Like, repost and bookmark in place**, via OAuth. Liking from Strata also adds
+  the post to your exclusions immediately, so it stops resurfacing without
+  waiting for the next like sync — and unliking makes it findable again.
 - **Progressive first run.** A shallow pass surfaces artwork within a couple of
   minutes, then the crawl keeps digging deeper in the background while you browse.
 - **Resettable seen state.** Kept in its own store, so forgetting everything you
@@ -110,8 +127,12 @@ Four design consequences worth knowing:
   off-protocol precisely so they stay private, so they are invisible here.
 - **Unlikes are not detected.** Removing a like leaves a stale exclusion until
   the exclusion table is rebuilt.
-- **Your blocks and mutes are not applied.** Unauthenticated reads don't carry
-  viewer state. This only matters for accounts you follow and have muted.
+- **Your blocks and mutes are not applied to the crawl.** The backfill reads
+  anonymously, so it doesn't carry viewer state. This only matters for accounts
+  you follow and have muted.
+- **Bookmarking is unverified.** The endpoint exists and requires auth, but its
+  request shape is inferred from the lexicon name rather than a published schema,
+  so it may need correcting on first real use.
 - **`posts_with_media` means images.** Video needs the `posts_with_video` filter
   as a separate pass.
 - **The depth gauge reflects what's indexed, not what exists.** Until an
@@ -128,20 +149,34 @@ background while you browse.
 | **Dig** | Draw a fresh random page |
 | **Older than** | Minimum age floor; `any age` disables it |
 | **Allow repeats** | Include posts already surfaced |
-| **Save** | Download the original file for that image or video |
+| **Download** | Save the original file for that image or video |
+| **Like / Repost / Bookmark** | Acts on your account; prompts sign-in if needed |
+| **Sign in** | OAuth via Bluesky; nothing is required to browse or download |
 | **Index** | Stats, dig deeper, reset seen posts, export/import, start over |
 
 ## Deploying
 
-The build output is committed, so GitHub Pages needs no CI:
+`.github/workflows/pages.yml` typechecks, builds and deploys on every push to
+`main`. Enable it with **Settings → Pages → Source: GitHub Actions**.
 
-```bash
-npm install
-npm run build
+**One thing must be edited before OAuth works:**
+[`public/client-metadata.json`](./public/client-metadata.json) hard-codes the
+deployed URL, and the AT Protocol requires `client_id` to be the exact URL that
+serves that file. If your Pages URL is not
+`https://spibane.github.io/Strata/`, update all three fields:
+
+```json
+{
+  "client_id":     "https://YOUR.github.io/REPO/client-metadata.json",
+  "client_uri":    "https://YOUR.github.io/REPO/",
+  "redirect_uris": ["https://YOUR.github.io/REPO/"]
+}
 ```
 
-Point Pages at the `public/` directory on `main`, or run the included workflow in
-`.github/workflows/pages.yml`, which builds and deploys on every push.
+The `scope` there must also match the scope requested in `src/session.ts`, or the
+authorization server rejects the request with `invalid_scope`. Local development
+needs none of this — a loopback origin builds its own client identity, so
+`npm run dev` on `127.0.0.1` can sign in as-is.
 
 ## Development
 
@@ -163,6 +198,8 @@ server-side settings.
 | `src/store.ts` | IndexedDB schema and every query, including random selection |
 | `src/crawl.ts` | Crawl orchestration, progress reporting, abort handling |
 | `src/media.ts` | Embed parsing and original-file downloads |
+| `src/session.ts` | OAuth sign-in, authenticated XRPC, likes/reposts/bookmarks |
 | `src/app.ts` | UI: setup, digging, cards, settings |
 | `public/index.html` | Page shell and all styling |
+| `public/client-metadata.json` | OAuth client identity; must match the deployed URL |
 | `public/app.js` | Built bundle, committed for static hosting |
