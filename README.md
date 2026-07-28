@@ -4,41 +4,50 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-1.0.0-black)]()
+[![Version](https://img.shields.io/badge/version-2.0.0-black)]()
 [![Status](https://img.shields.io/badge/status-Beta-yellow)]()
 [![Changelog](https://img.shields.io/badge/changelog-blue)](./CHANGELOG.md)
 
-[![Node](https://img.shields.io/badge/Node-22.x-339933?logo=nodedotjs&logoColor=white)]()
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)]()
-[![SQLite](https://img.shields.io/badge/SQLite-3.x-003B57?logo=sqlite&logoColor=white)]()
+[![esbuild](https://img.shields.io/badge/esbuild-0.28-FFCF00?logo=esbuild&logoColor=black)]()
+[![IndexedDB](https://img.shields.io/badge/IndexedDB-local-4A5568)]()
+[![No backend](https://img.shields.io/badge/backend-none-success)]()
 
 </div>
 
 ## Architecture
 
-Two independent halves that share a SQLite file. The indexer is slow and runs
-occasionally; the viewer is fast and reads only local data.
+One static page. There is no server, no database to host, and no account — the
+whole application is a browser tab that talks directly to the public AT Protocol
+APIs and keeps its index in IndexedDB.
 
 ```
-  INDEXER  (npm run index)                          VIEWER  (npm run serve)
-  ─────────────────────────                         ────────────────────────
-                                                    
-  resolveHandle ──► your DID                        browser
-        │                                              │  GET /api/shuffle
-        ├──► plc.directory ──► your PDS host           ▼
-        │                                          localhost:4173
-        ├──► getFollows ─────────► authors table       │
-        │                                              ├─► SELECT ... ORDER BY RANDOM()
-        ├──► listRecords ────────► excluded table      │      minus excluded, minus seen
-        │    app.bsky.feed.like                        │
-        │    app.bsky.feed.repost                      ├─► getPosts (hydrate 25 at a time)
-        │                                              │
-        └──► getAuthorFeed ──────► posts table         └─► JSON ──► age stamp + depth gauge
-             filter=posts_with_media
-             paged backwards per account
-                        │
-                        ▼
-                 data/strata.db
+                        BROWSER TAB  (there is nothing else)
+  ──────────────────────────────────────────────────────────────────────────
+   your handle
+       │
+       ├──► resolveHandle ──────────────► your DID
+       │
+       ├──► plc.directory ──────────────► your PDS host
+       │
+       ├──► getFollows ─────────────────► authors    ┐
+       │                                             │
+       ├──► listRecords ────────────────► excluded   │  IndexedDB
+       │      app.bsky.feed.like                     │  (this browser only)
+       │      app.bsky.feed.repost                   │
+       │                                             │
+       └──► getAuthorFeed ──────────────► posts      ┘
+              filter=posts_with_media
+              paged backwards per account
+                          │
+                          ▼
+              DIG ──► random sample over a fixed sort key
+                      minus excluded, minus seen, capped per author
+                          │
+                          ├──► getPosts ──► hydrate 25 at a time
+                          │
+                          └──► card ──► SAVE ──► com.atproto.sync.getBlob
+                                                 the artist's original upload
 ```
 
 Everything upstream is read through the public AppView at
@@ -46,15 +55,20 @@ Everything upstream is read through the public AppView at
 authentication anywhere** — follows, author feeds, likes, and reposts are all
 public records on the AT Protocol, so there is no app password to store.
 
-Two design consequences worth knowing:
+Four design consequences worth knowing:
 
-- **The backfill is the expensive part.** The firehose only carries new posts,
-  so reaching 2022 means paging `getAuthorFeed` backwards through each account
-  one page at a time. Progress is checkpointed per account, so the crawl is
-  resumable and interruptible.
-- **The viewer stores no content.** `posts` holds only URIs and timestamps.
-  Images, text, and counts are hydrated from Bluesky at display time, which
-  keeps the database small and means deleted posts disappear on their own.
+- **Nothing about you ever leaves your machine.** The index, your like
+  exclusions, and which posts you have already seen exist only in this browser.
+  Because there is no backend, there is no place for that data to be collected.
+- **Each visitor crawls from their own IP**, so rate-limit budget is per-person
+  rather than shared, and hosting costs nothing beyond static files.
+- **The backfill is the expensive part.** The firehose only carries new posts, so
+  reaching 2022 means paging `getAuthorFeed` backwards through each account one
+  page at a time. Progress is checkpointed per account, so a crawl is resumable
+  and interruptible — close the tab and the next visit picks up where it left off.
+- **The index stores no content.** `posts` holds only URIs and timestamps. Images,
+  text, and counts are hydrated from Bluesky at display time, which keeps the
+  index small and means deleted posts disappear on their own.
 
 ## Features
 
@@ -63,118 +77,92 @@ Two design consequences worth knowing:
 - **Excludes anything you liked or reposted**, read from your own repo. Repeat
   runs only scan back to the highest record key already seen, so syncing
   30,000 likes is expensive once and cheap thereafter.
+- **Original-quality downloads.** The Save button pulls the actual file the
+  artist uploaded via `com.atproto.sync.getBlob` — not the CDN's re-encoded
+  JPEG. Transparent PNGs stay transparent and video comes down as the source
+  MP4 rather than an HLS playlist.
+- **Progressive first run.** A shallow pass surfaces artwork within a couple of
+  minutes, then the crawl keeps digging deeper in the background while you browse.
+- **Resettable seen state.** Kept in its own store, so forgetting everything you
+  have been shown is instant and leaves the index and exclusions intact.
 - **Per-author caps** so one prolific account can't fill a page.
-- **Repeat suppression** via a `shown_at` stamp, with an override in the UI.
 - **Depth gauge** on each card showing where the post sits within that
   account's *indexed* history — a post near the bottom of the rail is close to
   the oldest thing Strata has found for that person.
-- **Resumable crawl.** Each run explores `--depth` more pages per account.
-  Run it repeatedly to reach further back without one long session.
+- **Export and import.** The whole index round-trips through a JSON file, for
+  moving between browsers or surviving storage eviction.
 - **Self-healing index.** Posts the AppView no longer returns are deleted
-  locally on the next shuffle that touches them.
+  locally on the next dig that touches them.
 - **Throttled and retried.** Requests are serialised with a minimum interval,
   with exponential backoff on 429 and 5xx.
 
 ### Known limitations
 
+- **Storage can be evicted.** Safari clears IndexedDB for sites not visited for
+  roughly a week. Strata calls `navigator.storage.persist()`, which Chrome
+  generally grants and Safari generally does not — export if you care about the
+  index.
+- **Every visitor crawls from scratch.** With no server there is no shared index,
+  so nobody benefits from anyone else's crawl.
+- **The tab must stay open while crawling.** Progress is saved continuously, so
+  closing it loses only the page in flight.
 - **Bookmarks cannot be excluded.** Bluesky's Saved Posts are stored
   off-protocol precisely so they stay private, so they are invisible here.
-- **Unlikes are not detected.** Removing a like leaves a stale exclusion.
-  Run with `--full-likes` to rebuild the exclusion table from scratch.
+- **Unlikes are not detected.** Removing a like leaves a stale exclusion until
+  the exclusion table is rebuilt.
 - **Your blocks and mutes are not applied.** Unauthenticated reads don't carry
   viewer state. This only matters for accounts you follow and have muted.
-- **`posts_with_media` means images.** Pass `--include-video` to crawl with the
-  `posts_with_video` filter instead; run it as a second pass to get both.
+- **`posts_with_media` means images.** Video needs the `posts_with_video` filter
+  as a separate pass.
 - **The depth gauge reflects what's indexed, not what exists.** Until an
-  account reports `done`, its true oldest post is probably older.
+  account is fully read, its true oldest post is probably older.
 
-## Environment Variables
+## Using it
 
-All optional — every value has a working default. A `.env` file in the project
-root is loaded automatically by every `npm run` script and is gitignored, so
-personal values never reach the repo. Copy `.env.example` to start.
+Type a handle, press **Start digging**, and wait for the first artwork to appear
+— about two minutes for a 600-account follow list. The crawl keeps going in the
+background while you browse.
 
-```env
-# ======= Identity =======
-BSKY_HANDLE=<str>                 # Default account to index; --handle overrides
+| Control | Effect |
+|---|---|
+| **Dig** | Draw a fresh random page |
+| **Older than** | Minimum age floor; `any age` disables it |
+| **Allow repeats** | Include posts already surfaced |
+| **Save** | Download the original file for that image or video |
+| **Index** | Stats, dig deeper, reset seen posts, export/import, start over |
 
-# ======= Storage =======
-STRATA_DB=<str>                   # SQLite path, default ./data/strata.db
+## Deploying
 
-# ======= Server =======
-PORT=<int>                        # Viewer port, default 4173
-
-# ======= Upstream =======
-BSKY_APPVIEW=<str>                # Default https://public.api.bsky.app
-PLC_DIRECTORY=<str>               # Default https://plc.directory
-MIN_REQUEST_INTERVAL_MS=<int>     # Gap between API calls, default 120
-```
-
-## Configuration
-
-### Indexer flags
-
-| Flag | Default | Effect |
-|---|---|---|
-| `--handle <h>` | `$BSKY_HANDLE` | Whose follows to index |
-| `--depth <n>` | `5` | Pages of history per account per run |
-| `--concurrency <n>` | `4` | Accounts crawled in parallel |
-| `--include-video` | off | Use the `posts_with_video` filter |
-| `--full-likes` | off | Rebuild exclusions instead of syncing incrementally |
-| `--no-refresh` | off | Skip the top-up pass over finished accounts |
-| `--reset` | off | Clear crawl cursors, keeping indexed posts |
-| `--stats-only` | off | Print index statistics and exit |
-
-### First run
+The build output is committed, so GitHub Pages needs no CI:
 
 ```bash
 npm install
-cp .env.example .env                        # then set BSKY_HANDLE
-npm run index                               # breadth first: 5 pages each
-npm run serve                               # http://localhost:4173
+npm run build
 ```
 
-Or skip the `.env` and pass the handle explicitly:
+Point Pages at the `public/` directory on `main`, or run the included workflow in
+`.github/workflows/pages.yml`, which builds and deploys on every push.
+
+## Development
 
 ```bash
-npm run index -- --handle you.bsky.social
+npm install
+npm run dev          # esbuild watch + static server on http://127.0.0.1:8000
+npm run typecheck    # must pass; no test suite yet
+npm run build        # minified bundle into public/app.js
 ```
 
-Re-run the indexer to go deeper. Once it reports every account as fully
-indexed, later runs only pick up new posts.
-
-```bash
-npm run index -- --depth 50    # dig much further back
-npm run stats                  # how far back have we got?
-```
-
-### Viewer controls
-
-`Older than` sets the minimum age floor — the point of the tool is to skip
-recent posts, so the default is three months. `Allow repeats` ignores the
-`shown_at` stamp when the unseen pool runs dry.
+There is no `.env` and nothing to configure — the app has no secrets and no
+server-side settings.
 
 ## Package Structure
 
-```
-strata/
-├── src/
-│   ├── atproto.ts        # XRPC client: throttling, retries, DID/PDS resolution
-│   ├── db.ts             # SQLite schema, upserts, random selection
-│   ├── index-crawl.ts    # Indexer CLI
-│   └── serve.ts          # Local HTTP server + hydration
-├── public/
-│   └── index.html        # Viewer (single file, no build step)
-└── data/
-    └── strata.db         # Created on first run
-```
-
-## Testing
-
-There is no unit-test suite yet. The type checker covers the API response
-shapes, which is where most breakage would come from:
-
-```bash
-npx tsc --noEmit              # Typecheck all sources
-npm run stats                 # Verify the index looks sane
-```
+| Path | Role |
+|---|---|
+| `src/atproto.ts` | All outbound HTTP. Throttling, retries, DID/PDS resolution, blob fetches |
+| `src/store.ts` | IndexedDB schema and every query, including random selection |
+| `src/crawl.ts` | Crawl orchestration, progress reporting, abort handling |
+| `src/media.ts` | Embed parsing and original-file downloads |
+| `src/app.ts` | UI: setup, digging, cards, settings |
+| `public/index.html` | Page shell and all styling |
+| `public/app.js` | Built bundle, committed for static hosting |

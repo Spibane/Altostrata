@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Strata</title>
+<meta name="description" content="Rediscover old media posts from the people you follow on Bluesky. Runs entirely in your browser.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;1,6..72,300&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet">
@@ -32,6 +33,8 @@ body {
   line-height: 1.65;
   -webkit-font-smoothing: antialiased;
 }
+
+[hidden] { display: none !important; }
 
 .eyebrow {
   font-family: var(--mono);
@@ -93,7 +96,7 @@ label.field {
   color: var(--dim);
 }
 
-select, button {
+select, button, input[type="text"] {
   font-family: var(--sans);
   font-size: 13px;
   color: var(--bone);
@@ -105,6 +108,9 @@ select, button {
 
 select { cursor: pointer; }
 
+button { cursor: pointer; }
+button:disabled { opacity: 0.5; cursor: default; }
+
 button.dig {
   font-family: var(--mono);
   font-size: 12px;
@@ -114,16 +120,69 @@ button.dig {
   background: var(--brass);
   border-color: var(--brass);
   padding: 9px 18px;
-  cursor: pointer;
   transition: filter 0.15s ease;
 }
 
 button.dig:hover:not(:disabled) { filter: brightness(1.12); }
-button.dig:disabled { opacity: 0.5; cursor: default; }
+
+button.ghost {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+button.ghost:hover { color: var(--bone); border-color: var(--faint); }
 
 :focus-visible {
   outline: 2px solid var(--brass);
   outline-offset: 2px;
+}
+
+/* ---------- progress strip ---------- */
+
+.progress {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 0 24px 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.track {
+  flex: 1;
+  height: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.track .fill {
+  height: 100%;
+  width: 0;
+  background: var(--brass);
+  transition: width 0.3s ease;
+}
+
+.track.indeterminate .fill {
+  width: 30%;
+  animation: sweep 1.4s ease-in-out infinite;
+}
+
+@keyframes sweep {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(360%); }
+}
+
+.progress .label {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 46ch;
 }
 
 /* ---------- layout ---------- */
@@ -137,8 +196,8 @@ main {
 .note {
   color: var(--dim);
   font-size: 14px;
-  padding: 60px 0;
-  max-width: 46ch;
+  padding: 40px 0;
+  max-width: 52ch;
 }
 
 .note strong { color: var(--bone); font-weight: 500; }
@@ -149,6 +208,44 @@ main {
   background: var(--panel);
   padding: 2px 6px;
   border-radius: 3px;
+}
+
+/* ---------- setup ---------- */
+
+.setup { padding: 40px 0 0; max-width: 58ch; }
+
+.setup h2 {
+  font-family: var(--serif);
+  font-weight: 300;
+  font-size: 34px;
+  line-height: 1.2;
+  margin: 14px 0 14px;
+}
+
+.setup p { color: var(--dim); margin: 0 0 22px; }
+
+.setup form { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }
+
+.setup input[type="text"] {
+  flex: 1;
+  min-width: 240px;
+  font-family: var(--mono);
+  padding: 11px 13px;
+}
+
+.setup .fine {
+  font-size: 13px;
+  color: var(--faint);
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+}
+
+.setup .fine b { color: var(--dim); font-weight: 500; }
+
+.error {
+  color: #e0876f;
+  font-size: 13.5px;
+  margin: 0 0 18px;
 }
 
 /* ---------- card ---------- */
@@ -236,16 +333,19 @@ main {
 
 .media.n1 { grid-template-columns: 1fr; }
 .media.n2, .media.n3, .media.n4 { grid-template-columns: 1fr 1fr; }
-.media.n3 > a:first-child { grid-column: span 2; }
+.media.n3 > figure:first-child { grid-column: span 2; }
 
-.media a {
-  display: block;
+.media figure {
+  position: relative;
+  margin: 0;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 3px;
   overflow: hidden;
   line-height: 0;
 }
+
+.media a { display: block; line-height: 0; }
 
 .media img {
   width: 100%;
@@ -258,6 +358,35 @@ main {
   object-fit: cover;
 }
 
+/* Download control, revealed on hover and always present for keyboard users. */
+.grab {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--bone);
+  background: color-mix(in srgb, var(--ink) 82%, transparent);
+  backdrop-filter: blur(6px);
+  border: 1px solid color-mix(in srgb, var(--bone) 22%, transparent);
+  border-radius: 3px;
+  padding: 6px 10px;
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+figure:hover .grab, .grab:focus-visible { opacity: 1; }
+.grab:hover { background: var(--brass); color: var(--ink); border-color: var(--brass); }
+.grab[data-state="working"] { opacity: 1; color: var(--brass); }
+.grab[data-state="done"] { opacity: 1; color: var(--brass); border-color: var(--brass); }
+.grab[data-state="failed"] { opacity: 1; color: #e0876f; border-color: #e0876f; }
+
+@media (hover: none) {
+  .grab { opacity: 1; }
+}
+
 footer.meta {
   font-family: var(--mono);
   font-size: 11.5px;
@@ -265,10 +394,24 @@ footer.meta {
   display: flex;
   gap: 14px;
   flex-wrap: wrap;
+  align-items: center;
 }
 
 footer.meta a { color: var(--dim); text-decoration: none; }
 footer.meta a:hover { color: var(--brass); }
+
+footer.meta button {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--dim);
+  background: none;
+  border: none;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+footer.meta button:hover { color: var(--brass); }
 
 .badge {
   color: var(--brass);
@@ -277,11 +420,67 @@ footer.meta a:hover { color: var(--brass); }
   padding: 0 5px;
 }
 
+/* ---------- settings dialog ---------- */
+
+dialog {
+  background: var(--panel);
+  color: var(--bone);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  max-width: 520px;
+  width: calc(100% - 40px);
+  padding: 0;
+}
+
+dialog::backdrop { background: rgb(6 8 10 / 0.72); }
+
+.sheet { padding: 26px 28px 24px; }
+
+.sheet h2 {
+  font-family: var(--serif);
+  font-weight: 300;
+  font-size: 24px;
+  margin: 0 0 20px;
+}
+
+.sheet dl {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 16px;
+  font-family: var(--mono);
+  font-size: 12px;
+  margin: 0 0 24px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.sheet dt { color: var(--faint); }
+.sheet dd { margin: 0; text-align: right; color: var(--bone); }
+
+.sheet .row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.sheet .caption {
+  font-size: 12.5px;
+  color: var(--faint);
+  margin: 0 0 22px;
+}
+
+.sheet .close { margin-top: 8px; }
+
+.danger { color: #e0876f; border-color: color-mix(in srgb, #e0876f 40%, transparent); }
+.danger:hover { color: #f0a08a; }
+
 @media (max-width: 640px) {
   .find { grid-template-columns: 1fr; gap: 0; }
   .gauge { display: none; }
   .age { font-size: 25px; margin-top: 0; }
   .tagline { display: none; }
+  .progress .label { max-width: 24ch; }
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -299,7 +498,7 @@ footer.meta a:hover { color: var(--brass); }
   <div class="bar">
     <h1>Strata<span>.</span></h1>
     <div class="tagline">Media posts from your follows, dug up at random</div>
-    <div class="controls">
+    <div class="controls" id="controls" hidden>
       <label class="field">
         Older than
         <select id="age">
@@ -313,131 +512,85 @@ footer.meta a:hover { color: var(--brass); }
       <label class="field">
         <input type="checkbox" id="seen"> Allow repeats
       </label>
+      <button class="ghost" id="open-settings" aria-haspopup="dialog">Index</button>
       <button class="dig" id="dig">Dig</button>
     </div>
+  </div>
+  <div class="progress" id="progress" hidden>
+    <div class="track" id="track"><div class="fill" id="fill"></div></div>
+    <div class="label" id="progress-label"></div>
+    <button class="ghost" id="stop">Stop</button>
   </div>
 </header>
 
 <main>
+  <section class="setup" id="setup" hidden>
+    <div class="eyebrow">Nothing indexed yet</div>
+    <h2>Which account&rsquo;s follows should we dig through?</h2>
+    <p>
+      Strata reads the public posting history of everyone you follow and picks out
+      media posts you have never liked or reposted &mdash; then shows them at random,
+      from any point in time.
+    </p>
+    <form id="setup-form">
+      <input type="text" id="handle" placeholder="you.bsky.social" autocomplete="off"
+             spellcheck="false" aria-label="Bluesky handle">
+      <button class="dig" type="submit" id="start">Start digging</button>
+    </form>
+    <p class="error" id="setup-error" hidden></p>
+    <p class="fine">
+      <b>Everything stays in this browser.</b> There is no account, no password and no
+      server &mdash; the index is built from public AT Protocol records and stored locally
+      in IndexedDB. Nothing about what you have liked ever leaves your machine.
+      Already have an export? <button class="ghost" id="import-first" type="button">Import an index</button>
+    </p>
+  </section>
+
   <div id="results"></div>
   <div class="note" id="note"></div>
 </main>
 
-<script>
-const resultsEl = document.getElementById("results");
-const noteEl = document.getElementById("note");
-const digBtn = document.getElementById("dig");
+<dialog id="settings">
+  <div class="sheet">
+    <h2>Index</h2>
+    <dl id="stats"></dl>
 
-function escapeHtml(value) {
-  return String(value).replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-}
-
-/** "3 years, 7 months" — the coarse unit is what matters here, not precision. */
-function formatAge(iso) {
-  const then = new Date(iso);
-  const now = new Date();
-  let months = (now.getFullYear() - then.getFullYear()) * 12 + (now.getMonth() - then.getMonth());
-  if (now.getDate() < then.getDate()) months -= 1;
-  if (months < 1) {
-    const days = Math.max(1, Math.round((now - then) / 86400000));
-    return days === 1 ? "Yesterday" : `${days} days ago`;
-  }
-  const years = Math.floor(months / 12);
-  const rest = months % 12;
-  const parts = [];
-  if (years) parts.push(`${years} year${years === 1 ? "" : "s"}`);
-  if (rest) parts.push(`${rest} month${rest === 1 ? "" : "s"}`);
-  return `${parts.join(", ")} ago`;
-}
-
-function formatDate(iso) {
-  return new Date(iso).toLocaleDateString(undefined, {
-    year: "numeric", month: "short", day: "numeric",
-  });
-}
-
-function gaugeHtml(card) {
-  if (card.depth === null) return '<div class="gauge"></div>';
-  const fromTop = (1 - card.depth) * 100;
-  const oldestYear = card.authorOldest ? new Date(card.authorOldest).getFullYear() : "";
-  return `<div class="gauge" title="Position within this account's indexed history">
-    <span class="cap top">now</span>
-    <span class="tick" style="top:${fromTop.toFixed(1)}%"></span>
-    <span class="cap bottom">${oldestYear}</span>
-  </div>`;
-}
-
-function mediaHtml(card) {
-  const shown = card.images.slice(0, 4);
-  const items = shown.map((image) => `
-    <a href="${escapeHtml(image.full)}" target="_blank" rel="noreferrer">
-      <img src="${escapeHtml(image.thumb)}" alt="${escapeHtml(image.alt || "Untitled image")}" loading="lazy">
-    </a>`).join("");
-  return `<div class="media n${shown.length}">${items}</div>`;
-}
-
-function cardHtml(card) {
-  const extra = card.images.length > 4 ? `+${card.images.length - 4} more` : "";
-  return `<article class="find">
-    ${gaugeHtml(card)}
-    <div>
-      <div class="age">${escapeHtml(formatAge(card.createdAt))}</div>
-      <div class="byline">
-        <a href="https://bsky.app/profile/${escapeHtml(card.handle)}" target="_blank" rel="noreferrer">${escapeHtml(card.displayName)}</a>
-        &nbsp;@${escapeHtml(card.handle)}
-      </div>
-      ${card.text ? `<p class="text">${escapeHtml(card.text)}</p>` : ""}
-      ${mediaHtml(card)}
-      <footer class="meta">
-        <span>${escapeHtml(formatDate(card.createdAt))}</span>
-        <span>${card.likeCount} likes</span>
-        ${card.isVideo ? '<span class="badge">video</span>' : ""}
-        ${extra ? `<span>${extra}</span>` : ""}
-        <a href="${escapeHtml(card.webUrl)}" target="_blank" rel="noreferrer">Open on Bluesky &rarr;</a>
-      </footer>
+    <div class="row">
+      <button class="ghost" id="deepen">Dig deeper</button>
+      <button class="ghost" id="refresh">Check for new posts</button>
     </div>
-  </article>`;
-}
+    <p class="caption" id="depth-note"></p>
 
-async function dig() {
-  digBtn.disabled = true;
-  digBtn.textContent = "Digging";
-  noteEl.textContent = "";
+    <div class="row">
+      <button class="ghost" id="reset-seen">Reset seen posts</button>
+    </div>
+    <p class="caption">
+      Forgets which posts have already been surfaced, so everything becomes findable
+      again. Your index and your like exclusions are kept.
+    </p>
 
-  const params = new URLSearchParams({
-    n: "12",
-    minAgeDays: document.getElementById("age").value,
-    includeSeen: document.getElementById("seen").checked ? "1" : "0",
-  });
+    <div class="row">
+      <button class="ghost" id="export">Export index</button>
+      <button class="ghost" id="import">Import index</button>
+    </div>
+    <p class="caption">
+      A JSON copy of the index, for moving between browsers or guarding against
+      Safari clearing storage after a week of not visiting.
+    </p>
 
-  try {
-    const response = await fetch(`/api/shuffle?${params}`);
-    if (!response.ok) throw new Error(`Server returned ${response.status}`);
-    const cards = await response.json();
+    <div class="row">
+      <button class="ghost danger" id="reset-all">Start over</button>
+    </div>
+    <p class="caption">Erases the whole local index, including which account it was built for.</p>
 
-    if (cards.length === 0) {
-      resultsEl.innerHTML = "";
-      const stats = await fetch("/api/stats").then((r) => r.json());
-      noteEl.innerHTML = stats.posts === 0
-        ? `<strong>Nothing indexed yet.</strong> Run <code>npm run index -- --handle you.bsky.social</code>, then dig.`
-        : `<strong>Nothing left to surface at this depth.</strong> Loosen the age filter, allow repeats, or run the indexer again to reach further back. ${stats.unseen} of ${stats.posts} indexed posts are still unseen.`;
-      return;
-    }
+    <div class="row close">
+      <button class="ghost" id="close-settings">Close</button>
+    </div>
+  </div>
+</dialog>
 
-    resultsEl.innerHTML = cards.map(cardHtml).join("");
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  } catch (err) {
-    noteEl.innerHTML = `<strong>Could not reach the indexer.</strong> ${escapeHtml(err.message)}`;
-  } finally {
-    digBtn.disabled = false;
-    digBtn.textContent = "Dig";
-  }
-}
+<input type="file" id="file" accept="application/json,.json" hidden>
 
-digBtn.addEventListener("click", dig);
-document.getElementById("age").addEventListener("change", dig);
-dig();
-</script>
+<script type="module" src="./app.js"></script>
 </body>
 </html>
