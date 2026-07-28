@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Strata</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;1,6..72,300&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --ink: #0f1216;
+  --panel: #171b21;
+  --line: #262c35;
+  --bone: #e8e4dc;
+  --dim: #8b9099;
+  --faint: #5c626c;
+  --brass: #c29b5c;
+  --sans: "IBM Plex Sans", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+  --serif: "Newsreader", Georgia, serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ink);
+  color: var(--bone);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+/* ---------- header ---------- */
+
+header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: color-mix(in srgb, var(--ink) 92%, transparent);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--line);
+}
+
+.bar {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 18px 24px;
+  display: flex;
+  align-items: baseline;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+h1 {
+  font-family: var(--serif);
+  font-weight: 300;
+  font-size: 27px;
+  letter-spacing: 0.01em;
+  margin: 0;
+}
+
+h1 span { color: var(--brass); }
+
+.tagline {
+  color: var(--dim);
+  font-size: 13px;
+  margin-right: auto;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+label.field {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--dim);
+}
+
+select, button {
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--bone);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 7px 10px;
+}
+
+select { cursor: pointer; }
+
+button.dig {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink);
+  background: var(--brass);
+  border-color: var(--brass);
+  padding: 9px 18px;
+  cursor: pointer;
+  transition: filter 0.15s ease;
+}
+
+button.dig:hover:not(:disabled) { filter: brightness(1.12); }
+button.dig:disabled { opacity: 0.5; cursor: default; }
+
+:focus-visible {
+  outline: 2px solid var(--brass);
+  outline-offset: 2px;
+}
+
+/* ---------- layout ---------- */
+
+main {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 40px 24px 120px;
+}
+
+.note {
+  color: var(--dim);
+  font-size: 14px;
+  padding: 60px 0;
+  max-width: 46ch;
+}
+
+.note strong { color: var(--bone); font-weight: 500; }
+.note code {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--brass);
+  background: var(--panel);
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+/* ---------- card ---------- */
+
+.find {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  gap: 0 20px;
+  padding-bottom: 56px;
+  margin-bottom: 56px;
+  border-bottom: 1px solid var(--line);
+}
+
+.find:last-child { border-bottom: none; }
+
+/* Depth gauge: oldest indexed post at the bottom, newest at the top. */
+.gauge {
+  position: relative;
+  border-left: 1px solid var(--line);
+  margin-left: 8px;
+}
+
+.gauge .tick {
+  position: absolute;
+  left: -4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--brass);
+}
+
+.gauge .tick::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  width: 12px;
+  height: 1px;
+  background: var(--brass);
+  opacity: 0.5;
+}
+
+.gauge .cap {
+  position: absolute;
+  left: 10px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.gauge .cap.top { top: -2px; }
+.gauge .cap.bottom { bottom: -2px; }
+
+.age {
+  font-family: var(--serif);
+  font-size: 30px;
+  font-weight: 300;
+  line-height: 1.15;
+  color: var(--brass);
+  margin: -6px 0 2px;
+}
+
+.byline {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--dim);
+  margin-bottom: 18px;
+}
+
+.byline a { color: var(--bone); text-decoration: none; }
+.byline a:hover { text-decoration: underline; }
+
+.text {
+  margin: 0 0 18px;
+  white-space: pre-wrap;
+  max-width: 60ch;
+}
+
+.media {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.media.n1 { grid-template-columns: 1fr; }
+.media.n2, .media.n3, .media.n4 { grid-template-columns: 1fr 1fr; }
+.media.n3 > a:first-child { grid-column: span 2; }
+
+.media a {
+  display: block;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  overflow: hidden;
+  line-height: 0;
+}
+
+.media img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.media.n2 img, .media.n3 img, .media.n4 img {
+  aspect-ratio: 1;
+  object-fit: cover;
+}
+
+footer.meta {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--faint);
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+footer.meta a { color: var(--dim); text-decoration: none; }
+footer.meta a:hover { color: var(--brass); }
+
+.badge {
+  color: var(--brass);
+  border: 1px solid color-mix(in srgb, var(--brass) 40%, transparent);
+  border-radius: 2px;
+  padding: 0 5px;
+}
+
+@media (max-width: 640px) {
+  .find { grid-template-columns: 1fr; gap: 0; }
+  .gauge { display: none; }
+  .age { font-size: 25px; margin-top: 0; }
+  .tagline { display: none; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .find { animation: rise 0.4s ease both; }
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: none; }
+  }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="bar">
+    <h1>Strata<span>.</span></h1>
+    <div class="tagline">Media posts from your follows, dug up at random</div>
+    <div class="controls">
+      <label class="field">
+        Older than
+        <select id="age">
+          <option value="30">1 month</option>
+          <option value="90" selected>3 months</option>
+          <option value="365">1 year</option>
+          <option value="730">2 years</option>
+          <option value="0">any age</option>
+        </select>
+      </label>
+      <label class="field">
+        <input type="checkbox" id="seen"> Allow repeats
+      </label>
+      <button class="dig" id="dig">Dig</button>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div id="results"></div>
+  <div class="note" id="note"></div>
+</main>
+
+<script>
+const resultsEl = document.getElementById("results");
+const noteEl = document.getElementById("note");
+const digBtn = document.getElementById("dig");
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+/** "3 years, 7 months" — the coarse unit is what matters here, not precision. */
+function formatAge(iso) {
+  const then = new Date(iso);
+  const now = new Date();
+  let months = (now.getFullYear() - then.getFullYear()) * 12 + (now.getMonth() - then.getMonth());
+  if (now.getDate() < then.getDate()) months -= 1;
+  if (months < 1) {
+    const days = Math.max(1, Math.round((now - then) / 86400000));
+    return days === 1 ? "Yesterday" : `${days} days ago`;
+  }
+  const years = Math.floor(months / 12);
+  const rest = months % 12;
+  const parts = [];
+  if (years) parts.push(`${years} year${years === 1 ? "" : "s"}`);
+  if (rest) parts.push(`${rest} month${rest === 1 ? "" : "s"}`);
+  return `${parts.join(", ")} ago`;
+}
+
+function formatDate(iso) {
+  return new Date(iso).toLocaleDateString(undefined, {
+    year: "numeric", month: "short", day: "numeric",
+  });
+}
+
+function gaugeHtml(card) {
+  if (card.depth === null) return '<div class="gauge"></div>';
+  const fromTop = (1 - card.depth) * 100;
+  const oldestYear = card.authorOldest ? new Date(card.authorOldest).getFullYear() : "";
+  return `<div class="gauge" title="Position within this account's indexed history">
+    <span class="cap top">now</span>
+    <span class="tick" style="top:${fromTop.toFixed(1)}%"></span>
+    <span class="cap bottom">${oldestYear}</span>
+  </div>`;
+}
+
+function mediaHtml(card) {
+  const shown = card.images.slice(0, 4);
+  const items = shown.map((image) => `
+    <a href="${escapeHtml(image.full)}" target="_blank" rel="noreferrer">
+      <img src="${escapeHtml(image.thumb)}" alt="${escapeHtml(image.alt || "Untitled image")}" loading="lazy">
+    </a>`).join("");
+  return `<div class="media n${shown.length}">${items}</div>`;
+}
+
+function cardHtml(card) {
+  const extra = card.images.length > 4 ? `+${card.images.length - 4} more` : "";
+  return `<article class="find">
+    ${gaugeHtml(card)}
+    <div>
+      <div class="age">${escapeHtml(formatAge(card.createdAt))}</div>
+      <div class="byline">
+        <a href="https://bsky.app/profile/${escapeHtml(card.handle)}" target="_blank" rel="noreferrer">${escapeHtml(card.displayName)}</a>
+        &nbsp;@${escapeHtml(card.handle)}
+      </div>
+      ${card.text ? `<p class="text">${escapeHtml(card.text)}</p>` : ""}
+      ${mediaHtml(card)}
+      <footer class="meta">
+        <span>${escapeHtml(formatDate(card.createdAt))}</span>
+        <span>${card.likeCount} likes</span>
+        ${card.isVideo ? '<span class="badge">video</span>' : ""}
+        ${extra ? `<span>${extra}</span>` : ""}
+        <a href="${escapeHtml(card.webUrl)}" target="_blank" rel="noreferrer">Open on Bluesky &rarr;</a>
+      </footer>
+    </div>
+  </article>`;
+}
+
+async function dig() {
+  digBtn.disabled = true;
+  digBtn.textContent = "Digging";
+  noteEl.textContent = "";
+
+  const params = new URLSearchParams({
+    n: "12",
+    minAgeDays: document.getElementById("age").value,
+    includeSeen: document.getElementById("seen").checked ? "1" : "0",
+  });
+
+  try {
+    const response = await fetch(`/api/shuffle?${params}`);
+    if (!response.ok) throw new Error(`Server returned ${response.status}`);
+    const cards = await response.json();
+
+    if (cards.length === 0) {
+      resultsEl.innerHTML = "";
+      const stats = await fetch("/api/stats").then((r) => r.json());
+      noteEl.innerHTML = stats.posts === 0
+        ? `<strong>Nothing indexed yet.</strong> Run <code>npm run index -- --handle you.bsky.social</code>, then dig.`
+        : `<strong>Nothing left to surface at this depth.</strong> Loosen the age filter, allow repeats, or run the indexer again to reach further back. ${stats.unseen} of ${stats.posts} indexed posts are still unseen.`;
+      return;
+    }
+
+    resultsEl.innerHTML = cards.map(cardHtml).join("");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  } catch (err) {
+    noteEl.innerHTML = `<strong>Could not reach the indexer.</strong> ${escapeHtml(err.message)}`;
+  } finally {
+    digBtn.disabled = false;
+    digBtn.textContent = "Dig";
+  }
+}
+
+digBtn.addEventListener("click", dig);
+document.getElementById("age").addEventListener("change", dig);
+dig();
+</script>
+</body>
+</html>

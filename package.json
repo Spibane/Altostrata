@@ -1,0 +1,21 @@
+{
+  "name": "strata",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Rediscover old media posts from the people you follow on Bluesky",
+  "scripts": {
+    "index": "tsx --env-file-if-exists=.env src/index-crawl.ts",
+    "serve": "tsx --env-file-if-exists=.env src/serve.ts",
+    "stats": "tsx --env-file-if-exists=.env src/index-crawl.ts --stats-only"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^22.7.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
