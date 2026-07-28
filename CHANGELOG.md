@@ -25,6 +25,14 @@
   Their colours were already current; the button shapes were not
 - Added quarter marks to the depth rail, so a post's dot reads as a fraction of
   that account's indexed history rather than a bare position on a line
+- Fixed clicks landing on a button's icon doing nothing. The delegated handler
+  narrowed the event target to `HTMLElement`, which an inline SVG is not, so only
+  the padding around each glyph responded. This affected the like, repost and
+  bookmark buttons as well as the per-image download overlays
+- The card's download button now appears on every post with an original file,
+  not only on posts with more than one image
+- Confirmed bookmarks take the same `{uri, cid}` subject shape as likes and
+  reposts, and removed the notes calling that shape unverified
 
 ### v2.1.0 - 2026-07-28
 

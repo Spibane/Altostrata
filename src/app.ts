@@ -333,10 +333,18 @@ function actionsHtml(card: Card): string {
     `aria-pressed="${on}" title="${title}">${glyph}` +
     `${count ? `<span class="count">${formatCount(count)}</span>` : ""}</button>`;
 
+  // Always offered when there is anything to fetch. The count only appears when
+  // there is more than one file, but the label span is always present so status
+  // text has somewhere to go; CSS hides it while empty.
   const downloadAll =
-    card.originals > 1
-      ? `<button class="act" data-all="${uri}" title="Download every original on this post">` +
-        `${ICONS.download}<span class="label">${card.originals}</span></button>`
+    card.originals > 0
+      ? `<button class="act" data-all="${uri}" title="${
+          card.originals > 1
+            ? `Download all ${card.originals} originals`
+            : "Download the original file"
+        }">${ICONS.download}<span class="label">${
+          card.originals > 1 ? card.originals : ""
+        }</span></button>`
       : "";
 
   return `<div class="acts">
@@ -580,7 +588,10 @@ async function applyAction(button: HTMLButtonElement): Promise<void> {
 
 ui.results.addEventListener("click", (event) => {
   const node = event.target;
-  if (!(node instanceof HTMLElement)) return;
+  // Element, not HTMLElement: every button in here contains an inline SVG, and a
+  // click landing on the glyph makes the target an SVGPathElement. Narrowing to
+  // HTMLElement silently swallowed those clicks, so only the padding worked.
+  if (!(node instanceof Element)) return;
   const grab = node.closest<HTMLButtonElement>("button.grab");
   if (grab) {
     void handleGrab(grab);

@@ -123,16 +123,14 @@ Four design consequences worth knowing:
   so nobody benefits from anyone else's crawl.
 - **The tab must stay open while crawling.** Progress is saved continuously, so
   closing it loses only the page in flight.
-- **Bookmarks cannot be excluded.** Bluesky's Saved Posts are stored
-  off-protocol precisely so they stay private, so they are invisible here.
+- **Bookmarked posts are not excluded yet.** Saved Posts live on the AppView
+  rather than in your repo, so the anonymous crawl cannot see them. Signing in
+  makes them readable, so this is unbuilt rather than impossible.
 - **Unlikes are not detected.** Removing a like leaves a stale exclusion until
   the exclusion table is rebuilt.
 - **Your blocks and mutes are not applied to the crawl.** The backfill reads
   anonymously, so it doesn't carry viewer state. This only matters for accounts
   you follow and have muted.
-- **Bookmarking is unverified.** The endpoint exists and requires auth, but its
-  request shape is inferred from the lexicon name rather than a published schema,
-  so it may need correcting on first real use.
 - **`posts_with_media` means images.** Video needs the `posts_with_video` filter
   as a separate pass.
 - **The depth gauge reflects what's indexed, not what exists.** Until an
