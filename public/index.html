@@ -87,15 +87,25 @@ header {
   flex-wrap: nowrap;
 }
 
-h1 {
+h1 { margin: 0; line-height: 1; }
+
+/* A real button, so the back-to-top affordance is keyboard reachable. */
+.wordmark {
   font-family: var(--serif);
   font-weight: 300;
   font-size: 27px;
   letter-spacing: 0.01em;
-  margin: 0;
+  color: var(--text);
+  background: none;
+  border: none;
+  border-radius: 4px;
+  padding: 2px 2px 0;
+  line-height: 1.2;
+  transition: color 0.15s ease;
 }
 
-h1 span { color: var(--amber); }
+.wordmark:hover { color: var(--amber); }
+.wordmark span { color: var(--amber); }
 
 .tagline {
   color: var(--dim);
@@ -139,9 +149,13 @@ select, button, input[type="text"] {
   color: var(--text);
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 7px 10px;
 }
+
+/* One button shape everywhere. Pills came in with the card actions; leaving the
+   chrome and dialogs rectangular is what made them look unrefreshed. */
+button { border-radius: 999px; }
 
 select { cursor: pointer; }
 select:hover { border-color: var(--faint); }
@@ -319,6 +333,22 @@ main {
   position: relative;
   border-left: 1px solid var(--line);
   margin-left: 8px;
+}
+
+/* Quarter marks, so the dot's height reads as a fraction of the account's
+   indexed history rather than just "somewhere on a line". */
+.gauge::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--line) 0 1px,
+    transparent 1px 25%
+  );
 }
 
 .gauge .tick {
@@ -577,6 +607,25 @@ dialog::backdrop { background: rgb(4 4 5 / 0.76); }
   margin-bottom: 12px;
 }
 
+/* Raised rather than transparent: on the panel background a see-through button
+   reads as a label. */
+.sheet button.ghost {
+  background: var(--raised);
+  padding: 8px 14px;
+}
+
+.sheet button.ghost:hover:not(:disabled) {
+  background: #24262d;
+  color: var(--text);
+  border-color: var(--faint);
+}
+
+/* Recessed, so a field is distinguishable from the sheet it sits on. */
+dialog input[type="text"] { background: var(--ink); }
+
+/* How far back the dig has reached — the number the whole app is about. */
+.sheet dd.hi { color: var(--amber); }
+
 .sheet .caption {
   font-size: 12.5px;
   color: var(--faint);
@@ -614,7 +663,7 @@ dialog::backdrop { background: rgb(4 4 5 / 0.76); }
 
 <header>
   <div class="bar">
-    <h1>Strata<span>.</span></h1>
+    <h1><button class="wordmark" id="to-top" title="Back to top">Strata<span>.</span></button></h1>
     <div class="tagline" id="tagline">Media posts from your follows, dug up at random</div>
     <div class="controls" id="controls" hidden>
       <button class="dig" id="dig">Dig</button>

@@ -55,6 +55,7 @@ function el<T extends HTMLElement>(id: string): T {
 }
 
 const ui = {
+  toTop: el<HTMLButtonElement>("to-top"),
   controls: el("controls"),
   tagline: el("tagline"),
   age: el<HTMLSelectElement>("age"),
@@ -812,7 +813,7 @@ async function startFresh(handle: string): Promise<void> {
 async function refreshStats(): Promise<void> {
   const s = await stats();
   const usage = await estimateUsage();
-  const rows: Array<[string, string]> = [
+  const rows: Array<[string, string, boolean?]> = [
     ["Account", (await getMeta("owner_handle")) ?? "none"],
     ["Accounts followed", s.authors.toLocaleString()],
     ["Fully indexed", `${s.authorsComplete.toLocaleString()} of ${s.authors.toLocaleString()}`],
@@ -821,12 +822,16 @@ async function refreshStats(): Promise<void> {
     ["Likes and reposts", s.excluded.toLocaleString()],
     ["Already surfaced", s.seen.toLocaleString()],
     ["Still unseen", s.unseen.toLocaleString()],
-    ["Oldest post", s.oldest ? s.oldest.slice(0, 10) : "none yet"],
+    ["Oldest post", s.oldest ? s.oldest.slice(0, 10) : "none yet", true],
   ];
   if (usage) rows.push(["Browser storage", formatBytes(usage.usage)]);
 
   ui.statsList.innerHTML = rows
-    .map(([term, value]) => `<dt>${escapeHtml(term)}</dt><dd>${escapeHtml(value)}</dd>`)
+    .map(
+      ([term, value, highlight]) =>
+        `<dt>${escapeHtml(term)}</dt>` +
+        `<dd${highlight ? ' class="hi"' : ""}>${escapeHtml(value)}</dd>`,
+    )
     .join("");
 
   const pending = s.authors - s.authorsComplete;
@@ -964,6 +969,7 @@ function showBrowsing(): void {
 
 ui.dig.addEventListener("click", () => void dig());
 ui.age.addEventListener("change", () => void dig());
+ui.toTop.addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
 
 async function boot(): Promise<void> {
   void requestPersistence();

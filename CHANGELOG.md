@@ -19,6 +19,12 @@
   top of an already dark page
 - Fixed the download-all button being swallowed by the like/repost handler, as it
   carried both selectors
+- Made the wordmark a button that returns to the top of the page
+- Brought the dialogs into the same visual language as the cards: pill buttons
+  with raised fills, recessed input fields, and the oldest-post date in amber.
+  Their colours were already current; the button shapes were not
+- Added quarter marks to the depth rail, so a post's dot reads as a fraction of
+  that account's indexed history rather than a bare position on a line
 
 ### v2.1.0 - 2026-07-28
 
