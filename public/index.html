@@ -5,18 +5,38 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Strata</title>
 <meta name="description" content="Rediscover old media posts from the people you follow on Bluesky. Runs entirely in your browser.">
+<meta name="theme-color" content="#0a0a0b">
+<!-- Declares the page as already-dark, so browsers and extensions that offer to
+     darken pages can detect there is nothing to do. -->
+<meta name="color-scheme" content="dark">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;1,6..72,300&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root {
-  --ink: #0f1216;
-  --panel: #171b21;
-  --line: #262c35;
-  --bone: #e8e4dc;
-  --dim: #8b9099;
-  --faint: #5c626c;
-  --brass: #c29b5c;
+  /* Without this, Chromium and Edge apply auto-dark-mode on top of an already
+     dark page, flattening the text and action colours to their own greys while
+     leaving saturated hues alone. Declaring the scheme opts out, and gets native
+     dark form controls for free. */
+  color-scheme: dark;
+
+  /* True-neutral darks: the old palette had a green cast that read as grubby. */
+  --ink: #0a0a0b;
+  --panel: #15161a;
+  --raised: #1d1f24;
+  --line: #26282f;
+  --text: #f7f7f8;
+  --dim: #9a9ba1;
+  --faint: #6b6d75;
+
+  /* Amber carries the excavation motif: age stamps and the depth rail only. */
+  --amber: #ffb224;
+
+  /* Action colours, matching what these gestures look like on Bluesky. */
+  --like: #f4457f;
+  --repost: #21c56d;
+  --mark: #3b9dff;
+
   --sans: "IBM Plex Sans", system-ui, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, monospace;
   --serif: "Newsreader", Georgia, serif;
@@ -27,7 +47,7 @@
 body {
   margin: 0;
   background: var(--ink);
-  color: var(--bone);
+  color: var(--text);
   font-family: var(--sans);
   font-size: 15px;
   line-height: 1.65;
@@ -50,19 +70,21 @@ header {
   position: sticky;
   top: 0;
   z-index: 10;
-  background: color-mix(in srgb, var(--ink) 92%, transparent);
+  background: color-mix(in srgb, var(--ink) 88%, transparent);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--line);
 }
 
+/* Deliberately nowrap: the controls fit one row once the tagline steps aside,
+   and wrapping was what made the bar feel cramped. */
 .bar {
   max-width: 860px;
   margin: 0 auto;
-  padding: 18px 24px;
+  padding: 16px 24px;
   display: flex;
-  align-items: baseline;
-  gap: 20px;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: nowrap;
 }
 
 h1 {
@@ -73,19 +95,33 @@ h1 {
   margin: 0;
 }
 
-h1 span { color: var(--brass); }
+h1 span { color: var(--amber); }
 
 .tagline {
   color: var(--dim);
   font-size: 13px;
-  margin-right: auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
+/* Dig and its filters sit first; account and index chrome get pushed right. */
 .controls {
+  flex: 1;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
   flex-wrap: wrap;
+  min-width: 0;
+}
+
+/* `margin-left: auto` rather than a spacer element, so the group still sits
+   right-aligned after the bar wraps on a narrow window. */
+.secondary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
 }
 
 label.field {
@@ -94,36 +130,47 @@ label.field {
   gap: 7px;
   font-size: 13px;
   color: var(--dim);
+  white-space: nowrap;
 }
 
 select, button, input[type="text"] {
   font-family: var(--sans);
   font-size: 13px;
-  color: var(--bone);
+  color: var(--text);
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 3px;
+  border-radius: 6px;
   padding: 7px 10px;
 }
 
 select { cursor: pointer; }
+select:hover { border-color: var(--faint); }
+
+input[type="checkbox"] {
+  accent-color: var(--amber);
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+}
 
 button { cursor: pointer; }
-button:disabled { opacity: 0.5; cursor: default; }
+button:disabled { opacity: 0.45; cursor: default; }
 
 button.dig {
   font-family: var(--mono);
   font-size: 12px;
+  font-weight: 500;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--ink);
-  background: var(--brass);
-  border-color: var(--brass);
-  padding: 9px 18px;
-  transition: filter 0.15s ease;
+  color: #1a1204;
+  background: var(--amber);
+  border-color: var(--amber);
+  padding: 9px 20px;
+  transition: filter 0.15s ease, transform 0.05s ease;
 }
 
-button.dig:hover:not(:disabled) { filter: brightness(1.12); }
+button.dig:hover:not(:disabled) { filter: brightness(1.1); }
+button.dig:active:not(:disabled) { transform: translateY(1px); }
 
 button.ghost {
   font-family: var(--mono);
@@ -131,12 +178,17 @@ button.ghost {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--dim);
+  background: transparent;
 }
 
-button.ghost:hover { color: var(--bone); border-color: var(--faint); }
+button.ghost:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--faint);
+  background: var(--panel);
+}
 
 :focus-visible {
-  outline: 2px solid var(--brass);
+  outline: 2px solid var(--amber);
   outline-offset: 2px;
 }
 
@@ -145,7 +197,7 @@ button.ghost:hover { color: var(--bone); border-color: var(--faint); }
 .progress {
   max-width: 860px;
   margin: 0 auto;
-  padding: 0 24px 16px;
+  padding: 0 24px 14px;
   display: flex;
   align-items: center;
   gap: 14px;
@@ -155,13 +207,14 @@ button.ghost:hover { color: var(--bone); border-color: var(--faint); }
   flex: 1;
   height: 2px;
   background: var(--line);
+  border-radius: 2px;
   overflow: hidden;
 }
 
 .track .fill {
   height: 100%;
   width: 0;
-  background: var(--brass);
+  background: var(--amber);
   transition: width 0.3s ease;
 }
 
@@ -200,14 +253,14 @@ main {
   max-width: 52ch;
 }
 
-.note strong { color: var(--bone); font-weight: 500; }
+.note strong { color: var(--text); font-weight: 500; }
 .note code {
   font-family: var(--mono);
   font-size: 12.5px;
-  color: var(--brass);
+  color: var(--amber);
   background: var(--panel);
   padding: 2px 6px;
-  border-radius: 3px;
+  border-radius: 4px;
 }
 
 /* ---------- setup ---------- */
@@ -243,7 +296,7 @@ main {
 .setup .fine b { color: var(--dim); font-weight: 500; }
 
 .error {
-  color: #e0876f;
+  color: #ff8a6a;
   font-size: 13.5px;
   margin: 0 0 18px;
 }
@@ -254,8 +307,8 @@ main {
   display: grid;
   grid-template-columns: 44px 1fr;
   gap: 0 20px;
-  padding-bottom: 56px;
-  margin-bottom: 56px;
+  padding-bottom: 52px;
+  margin-bottom: 52px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -274,7 +327,8 @@ main {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--brass);
+  background: var(--amber);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--amber) 18%, transparent);
 }
 
 .gauge .tick::after {
@@ -284,7 +338,7 @@ main {
   top: 3px;
   width: 12px;
   height: 1px;
-  background: var(--brass);
+  background: var(--amber);
   opacity: 0.5;
 }
 
@@ -305,7 +359,7 @@ main {
   font-size: 30px;
   font-weight: 300;
   line-height: 1.15;
-  color: var(--brass);
+  color: var(--amber);
   margin: -6px 0 2px;
 }
 
@@ -316,7 +370,7 @@ main {
   margin-bottom: 18px;
 }
 
-.byline a { color: var(--bone); text-decoration: none; }
+.byline a { color: var(--text); text-decoration: none; }
 .byline a:hover { text-decoration: underline; }
 
 .text {
@@ -328,7 +382,7 @@ main {
 .media {
   display: grid;
   gap: 6px;
-  margin-bottom: 16px;
+  margin-bottom: 14px;
 }
 
 .media.n1 { grid-template-columns: 1fr; }
@@ -340,7 +394,7 @@ main {
   margin: 0;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 3px;
+  border-radius: 8px;
   overflow: hidden;
   line-height: 0;
 }
@@ -358,124 +412,140 @@ main {
   object-fit: cover;
 }
 
-/* Download control, revealed on hover and always present for keyboard users. */
+/* Per-image download, revealed on hover and always present for touch. */
 .grab {
   position: absolute;
   right: 8px;
   bottom: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-family: var(--mono);
   font-size: 11px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--bone);
-  background: color-mix(in srgb, var(--ink) 82%, transparent);
-  backdrop-filter: blur(6px);
-  border: 1px solid color-mix(in srgb, var(--bone) 22%, transparent);
-  border-radius: 3px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--ink) 78%, transparent);
+  backdrop-filter: blur(8px);
+  border: 1px solid color-mix(in srgb, var(--text) 22%, transparent);
+  border-radius: 6px;
   padding: 6px 10px;
+  line-height: 1;
   opacity: 0;
-  transition: opacity 0.15s ease, background 0.15s ease;
+  transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
 }
 
 figure:hover .grab, .grab:focus-visible { opacity: 1; }
-.grab:hover { background: var(--brass); color: var(--ink); border-color: var(--brass); }
-.grab[data-state="working"] { opacity: 1; color: var(--brass); }
-.grab[data-state="done"] { opacity: 1; color: var(--brass); border-color: var(--brass); }
-.grab[data-state="failed"] { opacity: 1; color: #e0876f; border-color: #e0876f; }
+.grab:hover { background: var(--amber); color: #1a1204; border-color: var(--amber); }
+.grab[data-state="done"] { opacity: 1; color: var(--amber); border-color: var(--amber); }
+.grab[data-state="failed"] { opacity: 1; color: #ff8a6a; border-color: #ff8a6a; }
 
 @media (hover: none) {
   .grab { opacity: 1; }
 }
 
-footer.meta {
+/* ---------- card footer ---------- */
+
+.stamp {
   font-family: var(--mono);
   font-size: 11.5px;
   color: var(--faint);
   display: flex;
-  gap: 14px;
-  flex-wrap: wrap;
+  gap: 10px;
   align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
 }
 
-footer.meta a { color: var(--dim); text-decoration: none; }
-footer.meta a:hover { color: var(--brass); }
+.badge {
+  color: var(--amber);
+  border: 1px solid color-mix(in srgb, var(--amber) 40%, transparent);
+  border-radius: 4px;
+  padding: 0 5px;
+}
 
-footer.meta button {
+/* Real buttons, not captions: bordered, filled on hover, coloured when active. */
+.acts {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.act {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 12px;
+  line-height: 1;
   color: var(--dim);
-  background: none;
-  border: none;
-  padding: 0;
-  text-decoration: underline;
-  text-underline-offset: 3px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 13px;
+  text-decoration: none;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
 }
 
-footer.meta button:hover { color: var(--brass); }
+.act svg { width: 16px; height: 16px; flex: none; }
+.act .count { font-variant-numeric: tabular-nums; }
+
+.act:hover:not(:disabled) { background: var(--raised); color: var(--text); border-color: var(--faint); }
+
+.act[data-busy="1"] { opacity: 0.5; }
+.act[data-failed="1"] { color: #ff8a6a; border-color: #ff8a6a; }
+
+/* Filled glyph plus colour once the gesture has been made. */
+.act[aria-pressed="true"] .fillable { fill: currentColor; }
+
+.act.like:hover:not(:disabled) { color: var(--like); border-color: color-mix(in srgb, var(--like) 55%, transparent); }
+.act.like[aria-pressed="true"] {
+  color: var(--like);
+  border-color: color-mix(in srgb, var(--like) 55%, transparent);
+  background: color-mix(in srgb, var(--like) 12%, transparent);
+}
+
+.act.repost:hover:not(:disabled) { color: var(--repost); border-color: color-mix(in srgb, var(--repost) 55%, transparent); }
+.act.repost[aria-pressed="true"] {
+  color: var(--repost);
+  border-color: color-mix(in srgb, var(--repost) 55%, transparent);
+  background: color-mix(in srgb, var(--repost) 12%, transparent);
+}
+
+.act.mark:hover:not(:disabled) { color: var(--mark); border-color: color-mix(in srgb, var(--mark) 55%, transparent); }
+.act.mark[aria-pressed="true"] {
+  color: var(--mark);
+  border-color: color-mix(in srgb, var(--mark) 55%, transparent);
+  background: color-mix(in srgb, var(--mark) 12%, transparent);
+}
+
+.act.open:hover { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 55%, transparent); }
 
 /* ---------- account ---------- */
 
 .who {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   font-family: var(--mono);
   font-size: 12px;
   color: var(--dim);
 }
 
-/* ---------- post actions ---------- */
-
-.acts {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-button.act {
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--dim);
-  background: none;
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  padding: 4px 9px;
-  text-decoration: none;
-}
-
-button.act:hover:not(:disabled) { color: var(--bone); border-color: var(--faint); }
-
-button.act[aria-pressed="true"] {
-  color: var(--brass);
-  border-color: color-mix(in srgb, var(--brass) 45%, transparent);
-  background: color-mix(in srgb, var(--brass) 10%, transparent);
-}
-
-button.act[data-busy="1"] { opacity: 0.55; }
-button.act[data-failed="1"] { color: #e0876f; border-color: #e0876f; }
-
-.badge {
-  color: var(--brass);
-  border: 1px solid color-mix(in srgb, var(--brass) 40%, transparent);
-  border-radius: 2px;
-  padding: 0 5px;
-}
-
-/* ---------- settings dialog ---------- */
+/* ---------- dialogs ---------- */
 
 dialog {
   background: var(--panel);
-  color: var(--bone);
+  color: var(--text);
   border: 1px solid var(--line);
-  border-radius: 4px;
+  border-radius: 10px;
   max-width: 520px;
   width: calc(100% - 40px);
   padding: 0;
 }
 
-dialog::backdrop { background: rgb(6 8 10 / 0.72); }
+dialog::backdrop { background: rgb(4 4 5 / 0.76); }
 
 .sheet { padding: 26px 28px 24px; }
 
@@ -498,7 +568,7 @@ dialog::backdrop { background: rgb(6 8 10 / 0.72); }
 }
 
 .sheet dt { color: var(--faint); }
-.sheet dd { margin: 0; text-align: right; color: var(--bone); }
+.sheet dd { margin: 0; text-align: right; color: var(--text); }
 
 .sheet .row {
   display: flex;
@@ -515,14 +585,19 @@ dialog::backdrop { background: rgb(6 8 10 / 0.72); }
 
 .sheet .close { margin-top: 8px; }
 
-.danger { color: #e0876f; border-color: color-mix(in srgb, #e0876f 40%, transparent); }
-.danger:hover { color: #f0a08a; }
+.danger { color: #ff8a6a; border-color: color-mix(in srgb, #ff8a6a 40%, transparent); }
+.danger:hover:not(:disabled) { color: #ffa48a; }
 
-@media (max-width: 640px) {
+/* The tagline is the first thing to go when width gets tight. */
+@media (max-width: 900px) {
+  .tagline { display: none; }
+}
+
+@media (max-width: 700px) {
   .find { grid-template-columns: 1fr; gap: 0; }
   .gauge { display: none; }
   .age { font-size: 25px; margin-top: 0; }
-  .tagline { display: none; }
+  .bar { flex-wrap: wrap; }
   .progress .label { max-width: 24ch; }
 }
 
@@ -540,28 +615,30 @@ dialog::backdrop { background: rgb(6 8 10 / 0.72); }
 <header>
   <div class="bar">
     <h1>Strata<span>.</span></h1>
-    <div class="tagline">Media posts from your follows, dug up at random</div>
+    <div class="tagline" id="tagline">Media posts from your follows, dug up at random</div>
     <div class="controls" id="controls" hidden>
+      <button class="dig" id="dig">Dig</button>
       <label class="field">
         Older than
         <select id="age">
+          <option value="0">now</option>
           <option value="30">1 month</option>
           <option value="90" selected>3 months</option>
           <option value="365">1 year</option>
           <option value="730">2 years</option>
-          <option value="0">any age</option>
         </select>
       </label>
       <label class="field">
         <input type="checkbox" id="seen"> Allow repeats
       </label>
-      <button class="ghost" id="signin" aria-haspopup="dialog">Sign in</button>
-      <span class="who" id="who" hidden>
-        <span id="who-handle"></span>
-        <button class="ghost" id="signout" title="Sign out">Sign out</button>
-      </span>
-      <button class="ghost" id="open-settings" aria-haspopup="dialog">Index</button>
-      <button class="dig" id="dig">Dig</button>
+      <div class="secondary">
+        <button class="ghost" id="open-settings" aria-haspopup="dialog">Index</button>
+        <button class="ghost" id="signin" aria-haspopup="dialog">Sign in</button>
+        <span class="who" id="who" hidden>
+          <span id="who-handle"></span>
+          <button class="ghost" id="signout" title="Sign out">Sign out</button>
+        </span>
+      </div>
     </div>
   </div>
   <div class="progress" id="progress" hidden>

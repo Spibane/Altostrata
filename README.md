@@ -4,7 +4,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-2.1.0-black)]()
+[![Version](https://img.shields.io/badge/version-2.1.1-black)]()
 [![Status](https://img.shields.io/badge/status-Beta-yellow)]()
 [![Changelog](https://img.shields.io/badge/changelog-blue)](./CHANGELOG.md)
 
@@ -147,7 +147,7 @@ background while you browse.
 | Control | Effect |
 |---|---|
 | **Dig** | Draw a fresh random page |
-| **Older than** | Minimum age floor; `any age` disables it |
+| **Older than** | Minimum age floor; `now` disables it |
 | **Allow repeats** | Include posts already surfaced |
 | **Download** | Save the original file for that image or video |
 | **Like / Repost / Bookmark** | Acts on your account; prompts sign-in if needed |

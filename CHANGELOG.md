@@ -1,5 +1,25 @@
 # Changelog
 
+### v2.1.1 - 2026-07-28
+
+- Replaced the muddy brass and cream palette with true-neutral darks, crisp white
+  text and a brighter amber, which is now reserved for the excavation motif: age
+  stamps, the depth rail and the Dig button
+- Turned the card footer links into real buttons — pill-shaped, with inline
+  Bluesky-style glyphs, abbreviated counts, and rose/green/blue active states for
+  liked, reposted and bookmarked
+- Reordered the top bar into a single row: Dig and its filters on the left, index
+  and account controls on the right
+- Hid the tagline while browsing and shortened the displayed handle by dropping a
+  `.bsky.social` suffix, which together took the gap between the top-bar groups
+  from 26px to 113px
+- Renamed the widest "older than" option to `now` and moved it to the top of the
+  list, so the scale reads shortest to longest
+- Declared `color-scheme: dark`, so browsers do not apply automatic dark mode on
+  top of an already dark page
+- Fixed the download-all button being swallowed by the like/repost handler, as it
+  carried both selectors
+
 ### v2.1.0 - 2026-07-28
 
 - Added optional sign-in with AT Protocol OAuth, so posts can be liked, reposted

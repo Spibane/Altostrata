@@ -56,6 +56,7 @@ function el<T extends HTMLElement>(id: string): T {
 
 const ui = {
   controls: el("controls"),
+  tagline: el("tagline"),
   age: el<HTMLSelectElement>("age"),
   seen: el<HTMLInputElement>("seen"),
   dig: el<HTMLButtonElement>("dig"),
@@ -161,6 +162,64 @@ function formatBytes(bytes: number): string {
   return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
 }
 
+/** 1200 -> "1.2K", matching how Bluesky abbreviates counts. */
+function formatCount(value: number): string {
+  if (value < 1000) return String(value);
+  if (value < 1_000_000) {
+    const thousands = value / 1000;
+    return `${thousands < 10 ? thousands.toFixed(1).replace(/\.0$/, "") : Math.round(thousands)}K`;
+  }
+  return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+}
+
+// ---------------------------------------------------------------------------
+// Icons
+//
+// Inline so the page stays self-contained and the glyphs inherit `currentColor`.
+// `.fillable` is filled by CSS once a gesture is active, the way a liked heart
+// goes solid on Bluesky.
+// ---------------------------------------------------------------------------
+
+function icon(paths: string, fillable = false): string {
+  return (
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" ` +
+    `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
+    `<path${fillable ? ' class="fillable"' : ""} d="${paths}"/></svg>`
+  );
+}
+
+const ICONS = {
+  like: icon("M12 20.8s-8-4.9-8-10.2A4.8 4.8 0 0 1 12 7.5a4.8 4.8 0 0 1 8 3.1c0 5.3-8 10.2-8 10.2z", true),
+  mark: icon("M6.5 3.5h11a1 1 0 0 1 1 1v16L12 16.2 5.5 20.5v-16a1 1 0 0 1 1-1z", true),
+  repost:
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" ` +
+    `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
+    `<path d="M17.5 3.5 21 7l-3.5 3.5"/><path d="M21 7H8.5A4.5 4.5 0 0 0 4 11.5V13"/>` +
+    `<path d="M6.5 20.5 3 17l3.5-3.5"/><path d="M3 17h12.5A4.5 4.5 0 0 0 20 12.5V11"/></svg>`,
+  download:
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" ` +
+    `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
+    `<path d="M12 3.5v11"/><path d="M7.5 10.5 12 15l4.5-4.5"/><path d="M4.5 20.5h15"/></svg>`,
+  open:
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" ` +
+    `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
+    `<path d="M14 3.5h6.5V10"/><path d="M20.5 3.5 12 12"/>` +
+    `<path d="M18 14.5v4a2 2 0 0 1-2 2H5.5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/></svg>`,
+} as const;
+
+/**
+ * Buttons carry an SVG beside their text, so transient labels are written into a
+ * dedicated span. Assigning textContent on the button itself would drop the icon.
+ */
+function labelOf(button: HTMLElement): string {
+  return button.querySelector(".label")?.textContent ?? "";
+}
+
+function setLabel(button: HTMLElement, text: string): void {
+  const label = button.querySelector(".label");
+  if (label) label.textContent = text;
+}
+
 // ---------------------------------------------------------------------------
 // Cards
 // ---------------------------------------------------------------------------
@@ -175,6 +234,7 @@ interface Card {
   images: ViewImage[];
   isVideo: boolean;
   likeCount: number;
+  repostCount: number;
   depth: number | null;
   authorOldest: string | null;
   originals: number;
@@ -213,6 +273,7 @@ function toCard(post: PostView, row: ShuffleRow): Card {
     images,
     isVideo,
     likeCount: post.likeCount ?? 0,
+    repostCount: post.repostCount ?? 0,
     depth: depthOf(row),
     authorOldest: row.authorOldest,
     originals: refs.length,
@@ -237,7 +298,9 @@ function mediaHtml(card: Card): string {
       const grab =
         i < card.originals
           ? `<button class="grab" data-uri="${escapeHtml(card.uri)}" data-index="${i}"
-             title="Download the original file">${card.isVideo ? "Download video" : "Download"}</button>`
+             title="Download the original file">${ICONS.download}<span class="label">${
+               card.isVideo ? "Video" : "Original"
+             }</span></button>`
           : "";
       return `<figure>
         <a href="${escapeHtml(image.full)}" target="_blank" rel="noreferrer">
@@ -255,22 +318,38 @@ function mediaHtml(card: Card): string {
  */
 function actionsHtml(card: Card): string {
   const state = actions.get(card.uri);
-  const button = (act: string, label: string, on: boolean): string =>
-    `<button class="act" data-act="${act}" data-uri="${escapeHtml(card.uri)}" ` +
-    `aria-pressed="${on}">${label}</button>`;
-  return `<span class="acts">
-    ${button("like", "Like", state?.likeUri != null)}
-    ${button("repost", "Repost", state?.repostUri != null)}
-    ${button("bookmark", "Bookmark", state?.bookmarked === true)}
-  </span>`;
+  const uri = escapeHtml(card.uri);
+
+  const act = (
+    kind: string,
+    action: string,
+    glyph: string,
+    on: boolean,
+    title: string,
+    count?: number,
+  ): string =>
+    `<button class="act ${kind}" data-act="${action}" data-uri="${uri}" ` +
+    `aria-pressed="${on}" title="${title}">${glyph}` +
+    `${count ? `<span class="count">${formatCount(count)}</span>` : ""}</button>`;
+
+  const downloadAll =
+    card.originals > 1
+      ? `<button class="act" data-all="${uri}" title="Download every original on this post">` +
+        `${ICONS.download}<span class="label">${card.originals}</span></button>`
+      : "";
+
+  return `<div class="acts">
+    ${act("like", "like", ICONS.like, state?.likeUri != null, "Like", card.likeCount)}
+    ${act("repost", "repost", ICONS.repost, state?.repostUri != null, "Repost", card.repostCount)}
+    ${act("mark", "bookmark", ICONS.mark, state?.bookmarked === true, "Bookmark")}
+    ${downloadAll}
+    <a class="act open" href="${escapeHtml(card.webUrl)}" target="_blank" rel="noreferrer"
+       title="Open on Bluesky">${ICONS.open}</a>
+  </div>`;
 }
 
 function cardHtml(card: Card): string {
   const extra = card.images.length > 4 ? `+${card.images.length - 4} more` : "";
-  const saveAll =
-    card.originals > 1
-      ? `<button data-all="${escapeHtml(card.uri)}">Download all ${card.originals}</button>`
-      : "";
   return `<article class="find">
     ${gaugeHtml(card)}
     <div>
@@ -281,15 +360,12 @@ function cardHtml(card: Card): string {
       </div>
       ${card.text ? `<p class="text">${escapeHtml(card.text)}</p>` : ""}
       ${mediaHtml(card)}
-      <footer class="meta">
+      <div class="stamp">
         <span>${escapeHtml(formatDate(card.createdAt))}</span>
-        <span>${card.likeCount} likes</span>
         ${card.isVideo ? '<span class="badge">video</span>' : ""}
         ${extra ? `<span>${escapeHtml(extra)}</span>` : ""}
-        ${actionsHtml(card)}
-        ${saveAll}
-        <a href="${escapeHtml(card.webUrl)}" target="_blank" rel="noreferrer">Open on Bluesky &rarr;</a>
-      </footer>
+      </div>
+      ${actionsHtml(card)}
     </div>
   </article>`;
 }
@@ -385,23 +461,23 @@ async function handleGrab(button: HTMLButtonElement): Promise<void> {
   const target = targets.get(uri);
   if (!target) return;
 
-  const original = button.textContent ?? "Save";
+  const original = labelOf(button);
   button.disabled = true;
   button.dataset.state = "working";
-  button.textContent = "Saving";
+  setLabel(button, "Saving");
   try {
     await downloadOriginal(target, index);
     button.dataset.state = "done";
-    button.textContent = "Saved";
+    setLabel(button, "Saved");
   } catch (err) {
     button.dataset.state = "failed";
-    button.textContent = "Failed";
+    setLabel(button, "Failed");
     console.warn(err);
   } finally {
     button.disabled = false;
     setTimeout(() => {
       delete button.dataset.state;
-      button.textContent = original;
+      setLabel(button, original);
     }, 2400);
   }
 }
@@ -412,19 +488,22 @@ async function handleGrabAll(button: HTMLButtonElement): Promise<void> {
   const target = targets.get(uri);
   if (!target) return;
 
-  const original = button.textContent ?? "Save all";
+  const original = labelOf(button);
   button.disabled = true;
-  button.textContent = "Saving originals";
+  button.dataset.busy = "1";
   try {
     const saved = await downloadAllOriginals(target);
-    button.textContent = `Saved ${saved}`;
+    setLabel(button, `${saved} saved`);
   } catch (err) {
-    button.textContent = "Failed";
+    button.dataset.failed = "1";
+    setLabel(button, "Failed");
     console.warn(err);
   } finally {
     button.disabled = false;
+    delete button.dataset.busy;
     setTimeout(() => {
-      button.textContent = original;
+      delete button.dataset.failed;
+      setLabel(button, original);
     }, 2400);
   }
 }
@@ -451,7 +530,6 @@ async function applyAction(button: HTMLButtonElement): Promise<void> {
   const state = actions.get(uri);
   if (!state) return;
 
-  const label = button.textContent?.trim() ?? "";
   button.dataset.busy = "1";
   button.disabled = true;
   delete button.dataset.failed;
@@ -488,14 +566,11 @@ async function applyAction(button: HTMLButtonElement): Promise<void> {
       button.setAttribute("aria-pressed", String(state.bookmarked));
     }
   } catch (err) {
+    // The glyph and count stay put; failure shows as the red state plus a note.
     button.dataset.failed = "1";
-    button.textContent = "Failed";
     const message = err instanceof Error ? err.message : String(err);
     ui.note.innerHTML = `<strong>That didn't go through.</strong> ${escapeHtml(message)}`;
-    setTimeout(() => {
-      button.textContent = label;
-      delete button.dataset.failed;
-    }, 3000);
+    setTimeout(() => delete button.dataset.failed, 3000);
   } finally {
     delete button.dataset.busy;
     button.disabled = false;
@@ -510,25 +585,33 @@ ui.results.addEventListener("click", (event) => {
     void handleGrab(grab);
     return;
   }
-  const act = node.closest<HTMLButtonElement>("button.act");
-  if (act) {
-    void applyAction(act);
+  // Checked before `.act`: the download-all button carries both, and routing it
+  // to applyAction would silently do nothing.
+  const all = node.closest<HTMLButtonElement>("button[data-all]");
+  if (all) {
+    void handleGrabAll(all);
     return;
   }
-  const all = node.closest<HTMLButtonElement>("button[data-all]");
-  if (all) void handleGrabAll(all);
+  const act = node.closest<HTMLButtonElement>("button.act");
+  if (act) void applyAction(act);
 });
 
 // ---------------------------------------------------------------------------
 // Auth UI
 // ---------------------------------------------------------------------------
 
+/** `@you.bsky.social` costs ~140px in the top bar; the default suffix is noise. */
+function shortHandle(handle: string): string {
+  return handle.replace(/\.bsky\.social$/i, "");
+}
+
 function reflectAccount(): void {
   const account = currentAccount();
   if (account) {
     ui.signin.hidden = true;
     ui.who.hidden = false;
-    ui.whoHandle.textContent = `@${account.handle}`;
+    ui.whoHandle.textContent = `@${shortHandle(account.handle)}`;
+    ui.whoHandle.title = `@${account.handle}`;
   } else {
     ui.signin.hidden = false;
     ui.who.hidden = true;
@@ -866,11 +949,17 @@ ui.file.addEventListener("change", async () => {
 function showSetup(): void {
   ui.setup.hidden = false;
   ui.controls.hidden = true;
+  ui.tagline.hidden = false;
 }
 
+/**
+ * The tagline gives way to the controls: it is redundant once there is a page of
+ * finds on screen, and keeping it would squeeze the whole row onto two lines.
+ */
 function showBrowsing(): void {
   ui.setup.hidden = true;
   ui.controls.hidden = false;
+  ui.tagline.hidden = true;
 }
 
 ui.dig.addEventListener("click", () => void dig());
