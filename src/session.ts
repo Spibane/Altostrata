@@ -5,7 +5,7 @@ import { runThrottled, type Transport } from "./atproto.ts";
 /**
  * `transition:generic` is what currently grants repo writes. The finer-grained
  * scope system is still landing; when it does, this should narrow to just the
- * collections Strata writes.
+ * collections Altostrata writes.
  */
 const SCOPE = "atproto transition:generic";
 

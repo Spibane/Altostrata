@@ -1,3 +1,11 @@
+/**
+ * Deliberately still "strata" after the rename to Altostrata. This name is
+ * invisible to users, and changing it would orphan every index already built —
+ * the app would open empty while the old database sat there consuming quota.
+ * IndexedDB is scoped per origin rather than per path, so on GitHub Pages this
+ * is shared with any other project on the same subdomain; it needs to stay
+ * distinctive, not current.
+ */
 const DB_NAME = "strata";
 const DB_VERSION = 1;
 
@@ -304,7 +312,7 @@ export async function insertExclusions(
   return added;
 }
 
-/** Used when a like is undone from inside Strata, so the post becomes findable again. */
+/** Used when a like is undone from inside Altostrata, so the post becomes findable again. */
 export async function removeExclusion(uri: string): Promise<void> {
   const { excluded, liked } = await loadSets();
   const db = await openDb();

@@ -1,8 +1,8 @@
 {
-  "client_id": "https://spibane.github.io/Strata/client-metadata.json",
-  "client_name": "Strata",
-  "client_uri": "https://spibane.github.io/Strata/",
-  "redirect_uris": ["https://spibane.github.io/Strata/"],
+  "client_id": "https://spibane.github.io/Altostrata/client-metadata.json",
+  "client_name": "Altostrata",
+  "client_uri": "https://spibane.github.io/Altostrata/",
+  "redirect_uris": ["https://spibane.github.io/Altostrata/"],
   "scope": "atproto transition:generic",
   "grant_types": ["authorization_code", "refresh_token"],
   "response_types": ["code"],

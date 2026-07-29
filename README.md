@@ -1,10 +1,10 @@
-<h1 align="center">&#128187; Strata</h1>
+<h1 align="center">&#128187; Altostrata</h1>
 
 <h2 align="center"><strong>Rediscover old media posts from the people you follow on Bluesky</strong></h2>
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-2.1.2-black)]()
+[![Version](https://img.shields.io/badge/version-2.2.0-black)]()
 [![Status](https://img.shields.io/badge/status-Beta-yellow)]()
 [![Changelog](https://img.shields.io/badge/changelog-blue)](./CHANGELOG.md)
 
@@ -56,7 +56,7 @@ public AT Protocol records, read through `public.api.bsky.app` plus
 `plc.directory` for PDS discovery.
 
 **Liking, reposting and bookmarking are opt-in and use OAuth.** No password is
-ever typed into Strata — you are sent to Bluesky to approve access, and tokens
+ever typed into Altostrata — you are sent to Bluesky to approve access, and tokens
 come back DPoP-bound to a non-extractable key held in this browser:
 
 ```
@@ -96,7 +96,7 @@ Four design consequences worth knowing:
   artist uploaded via `com.atproto.sync.getBlob` — not the CDN's re-encoded
   JPEG. Transparent PNGs stay transparent and video comes down as the source
   MP4 rather than an HLS playlist.
-- **Like, repost and bookmark in place**, via OAuth. Liking from Strata also adds
+- **Like, repost and bookmark in place**, via OAuth. Liking from Altostrata also adds
   the post to your exclusions immediately, so it stops resurfacing without
   waiting for the next like sync — and unliking makes it findable again.
 - **Progressive first run.** A shallow pass surfaces artwork within a couple of
@@ -106,7 +106,7 @@ Four design consequences worth knowing:
 - **Per-author caps** so one prolific account can't fill a page.
 - **Depth gauge** on each card showing where the post sits within that
   account's *indexed* history — a post near the bottom of the rail is close to
-  the oldest thing Strata has found for that person.
+  the oldest thing Altostrata has found for that person.
 - **Export and import.** The whole index round-trips through a JSON file, for
   moving between browsers or surviving storage eviction.
 - **Self-healing index.** Posts the AppView no longer returns are deleted
@@ -117,7 +117,7 @@ Four design consequences worth knowing:
 ### Known limitations
 
 - **Storage can be evicted.** Safari clears IndexedDB for sites not visited for
-  roughly a week. Strata calls `navigator.storage.persist()`, which Chrome
+  roughly a week. Altostrata calls `navigator.storage.persist()`, which Chrome
   generally grants and Safari generally does not — export if you care about the
   index.
 - **Every visitor crawls from scratch.** With no server there is no shared index,
@@ -163,7 +163,7 @@ background while you browse.
 [`public/client-metadata.json`](./public/client-metadata.json) hard-codes the
 deployed URL, and the AT Protocol requires `client_id` to be the exact URL that
 serves that file. If your Pages URL is not
-`https://spibane.github.io/Strata/`, update all three fields:
+`https://spibane.github.io/Altostrata/`, update all three fields:
 
 ```json
 {

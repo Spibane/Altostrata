@@ -524,7 +524,7 @@ async function handleGrabAll(button: HTMLButtonElement): Promise<void> {
 // ---------------------------------------------------------------------------
 
 /**
- * Liking from inside Strata writes the post into the exclusion store too, so it
+ * Liking from inside Altostrata writes the post into the exclusion store too, so it
  * stops resurfacing immediately rather than waiting for the next like sync.
  * Undoing the like removes the exclusion again.
  */
@@ -904,7 +904,7 @@ ui.exportBtn.addEventListener("click", async () => {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `strata-index-${(file.owner.handle ?? "export").replace(/[^a-z0-9.-]/gi, "_")}.json`;
+    anchor.download = `altostrata-index-${(file.owner.handle ?? "export").replace(/[^a-z0-9.-]/gi, "_")}.json`;
     document.body.append(anchor);
     anchor.click();
     anchor.remove();
@@ -998,7 +998,7 @@ async function boot(): Promise<void> {
     s = await stats();
   } catch (err) {
     ui.note.innerHTML =
-      `<strong>This browser will not let Strata store an index.</strong> ` +
+      `<strong>This browser will not let Altostrata store an index.</strong> ` +
       `Private windows and blocked site data prevent IndexedDB from opening. ` +
       escapeHtml(err instanceof Error ? err.message : err);
     return;

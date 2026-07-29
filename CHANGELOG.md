@@ -1,5 +1,18 @@
 # Changelog
 
+### v2.2.0 - 2026-07-28
+
+- Renamed the project from Strata to **Altostrata**. "Strata" collided with an
+  entire category of condo-management software, which would have buried the app
+  in search forever. Altostrata keeps the layers metaphor — the depth rail and
+  age stamps are unchanged — while borrowing from *altostratus*, the layered
+  cloud deck, so it sits in Bluesky's ATmosphere rather than underground
+- **Breaking for deployment:** `client_id` in `public/client-metadata.json` now
+  points at the new Pages URL. OAuth fails until the deployed URL and that file
+  agree, and anyone who signed in against the old URL has to sign in again
+- Kept the IndexedDB database name as `strata`. It is invisible to users, and
+  renaming it would orphan every index already built
+
 ### v2.1.2 - 2026-07-28
 
 - Added an "Include liked" toggle that re-admits posts excluded because you liked
