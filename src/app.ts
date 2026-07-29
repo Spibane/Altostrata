@@ -442,7 +442,10 @@ async function dig(afterMessage?: string): Promise<void> {
   const superseded = (): boolean => generation !== digGeneration;
 
   ui.dig.disabled = true;
-  ui.dig.textContent = "Digging";
+  // Three characters, exactly as wide as "Dig" in a monospace face. "Digging" was
+  // 34px wider, and with the mark now in the header there is not enough slack for
+  // that — every dig bumped the row onto two lines and back.
+  ui.dig.textContent = "···";
   ui.note.textContent = "";
 
   try {

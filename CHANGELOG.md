@@ -1,5 +1,19 @@
 # Changelog
 
+### v2.5.1 - 2026-07-28
+
+- Restored the full four-bar logo in the header, matching the original mockup:
+  bar widths 62/48/62/40 at descending opacity with the amber dot on the third.
+  The favicon keeps its three-bar simplification, which is only needed at 16px
+- Sized the mark to the logotype's ascender rather than its cap height, so its top
+  meets the top of the name. "Altostrata" carries an l and two t's, which set the
+  line the eye reads at 19.3px against an 18.6px cap — the mark now stands 20.5px
+  with its top within 0.05px of the letters and its foot still on the baseline
+- Fixed the header bouncing between one and two rows on every dig. With the mark
+  now occupying header space, the button's "Digging" label — 34px wider than
+  "Dig" — no longer fit, so the row wrapped and unwrapped each time. The busy
+  label is three characters instead, exactly as wide as "Dig" in a monospace face
+
 ### v2.5.0 - 2026-07-28
 
 - Clicking an image now opens it in an overlay instead of a new tab. Multi-image

@@ -140,17 +140,18 @@ h1 { margin: 0; line-height: 1; }
   transition: color 0.15s ease;
 }
 
-/* Same three-bar geometry as the favicon, but cropped to the artwork instead of
-   padded inside a tile. The favicon needs that margin so it sits well in a
-   rounded icon; here it only made the mark look shrunken — the glyph filled about
-   half the box it was given.
+/* The full four-bar mark, cropped to its artwork rather than padded inside a tile.
+   The favicon keeps three thicker bars and its own margin, because at 16px four
+   7px bars smear together — but inline there is room for all four, and cropping
+   means the dot lands larger here than the simplified version managed.
    The bars keep their own colour so hover tints only the word, leaving the amber
    dot legible instead of dissolving into an all-amber mark. */
-/* Keyed to the cap height of the word beside it — 19px tall against a measured
-   18.6px cap at 27px Newsreader. Filling the line box instead made the mark
-   overpower the logotype. Width follows from the 40:33 artwork ratio. */
+/* Keyed to the ascender of the word beside it, not its cap height: "Altostrata"
+   has an l and two t's, so the eye reads the top of the name at 19.3px rather than
+   the 18.6px cap. With the foot carrying its optical overshoot below the baseline,
+   20.5px of mark lands its top on that line. Width follows the 63.5:52 artwork. */
 .wordmark .mark {
-  width: 23px;
+  width: 25px;
   height: auto;
   flex: none;
   /* Optical overshoot. Sitting the mark's flat foot exactly on the baseline reads
@@ -897,7 +898,7 @@ dialog input[type="text"] { background: var(--ink); }
 
 <header>
   <div class="bar">
-    <h1><button class="wordmark" id="to-top" title="Back to top"><svg class="mark" viewBox="0 0 40 33" aria-hidden="true"><rect x="0" y="0" width="40" height="7" rx="3.5" fill="#f7f7f8" opacity=".92"/><rect x="0" y="13" width="28" height="7" rx="3.5" fill="#f7f7f8" opacity=".5"/><rect x="0" y="26" width="40" height="7" rx="3.5" fill="#f7f7f8" opacity=".28"/><circle cx="32" cy="16.5" r="8" fill="#ffb224"/></svg><span class="word">Altostrata<span>.</span></span></button></h1>
+    <h1><button class="wordmark" id="to-top" title="Back to top"><svg class="mark" viewBox="0 0 63.5 52" aria-hidden="true"><rect x="0" y="0" width="62" height="7" rx="3.5" fill="#f7f7f8" opacity=".95"/><rect x="0" y="15" width="48" height="7" rx="3.5" fill="#f7f7f8" opacity=".58"/><rect x="0" y="30" width="62" height="7" rx="3.5" fill="#f7f7f8" opacity=".34"/><rect x="0" y="45" width="40" height="7" rx="3.5" fill="#f7f7f8" opacity=".2"/><circle cx="55" cy="33.5" r="8.5" fill="#ffb224"/></svg><span class="word">Altostrata<span>.</span></span></button></h1>
     <div class="tagline" id="tagline">Media posts from your follows, dug up at random</div>
     <div class="controls" id="controls" hidden>
       <button class="dig" id="dig">Dig</button>
