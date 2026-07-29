@@ -1,5 +1,19 @@
 # Changelog
 
+### v2.3.0 - 2026-07-28
+
+- Mentions, links and hashtags in post text are now clickable, rendered from the
+  post's own facets. A link facet's display text is often a shortened form of its
+  target, so the visible text comes from the text and the href from the facet —
+  `www.cpsc.gov/Recalls/2026...` links to the full URL
+- Facet ranges are resolved in UTF-8 byte space rather than by string index.
+  Character indexing corrupts every facet following an emoji or non-Latin
+  character, which on an art feed is most posts
+- Facet URIs are restricted to `http` and `https`. Post text comes from strangers
+  and is rendered into an `href` on a public page, so `javascript:` and `data:`
+  links would otherwise execute
+- Moved `escapeHtml` into the new `richtext.ts` alongside the facet renderer
+
 ### v2.2.1 - 2026-07-28
 
 - Video posts can now be played. Previously they showed only a thumbnail — a

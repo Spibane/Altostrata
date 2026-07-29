@@ -4,7 +4,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-2.2.1-black)]()
+[![Version](https://img.shields.io/badge/version-2.3.0-black)]()
 [![Status](https://img.shields.io/badge/status-Beta-yellow)]()
 [![Changelog](https://img.shields.io/badge/changelog-blue)](./CHANGELOG.md)
 
@@ -96,6 +96,9 @@ Four design consequences worth knowing:
   artist uploaded via `com.atproto.sync.getBlob` — not the CDN's re-encoded
   JPEG. Transparent PNGs stay transparent and video comes down as the source
   MP4 rather than an HLS playlist.
+- **Mentions, links and hashtags are clickable**, rendered from the post's own
+  facets so a shortened link still points at its real target. Only `http` and
+  `https` are honoured, since post text comes from strangers.
 - **Video plays inline.** A thumbnail is a server-chosen frame and often says
   nothing about the clip, so video posts get a play button that loads the original
   file. Seeking works, which it does not when streaming from a PDS.
@@ -205,7 +208,8 @@ server-side settings.
 | `src/atproto.ts` | All outbound HTTP. Throttling, retries, DID/PDS resolution, blob fetches |
 | `src/store.ts` | IndexedDB schema and every query, including random selection |
 | `src/crawl.ts` | Crawl orchestration, progress reporting, abort handling |
-| `src/media.ts` | Embed parsing and original-file downloads |
+| `src/media.ts` | Embed parsing, video playback, original-file downloads |
+| `src/richtext.ts` | Facet rendering and HTML escaping |
 | `src/session.ts` | OAuth sign-in, authenticated XRPC, likes/reposts/bookmarks |
 | `src/app.ts` | UI: setup, digging, cards, settings |
 | `public/index.html` | Page shell and all styling |

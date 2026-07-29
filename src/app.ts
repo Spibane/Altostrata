@@ -1,4 +1,5 @@
 import { AbortedError, fetchBlob, getPosts, type PostView } from "./atproto.ts";
+import { escapeHtml, renderRichText } from "./richtext.ts";
 import { crawl, type CrawlProgress } from "./crawl.ts";
 import {
   authedTransport,
@@ -124,12 +125,7 @@ const videos = new Map<string, VideoRef>();
 // Formatting
 // ---------------------------------------------------------------------------
 
-function escapeHtml(value: unknown): string {
-  return String(value).replace(
-    /[&<>"']/g,
-    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c,
-  );
-}
+/** `escapeHtml` and rich-text rendering both live in `richtext.ts`. */
 
 /** "3 years, 7 months" — the coarse unit is what matters here, not precision. */
 function formatAge(iso: string): string {
@@ -237,7 +233,8 @@ function setLabel(button: HTMLElement, text: string): void {
 interface Card {
   uri: string;
   webUrl: string;
-  text: string;
+  /** Already-escaped HTML, with mentions, links and hashtags as anchors. */
+  textHtml: string;
   createdAt: string;
   handle: string;
   displayName: string;
@@ -278,7 +275,7 @@ function toCard(post: PostView, row: ShuffleRow): Card {
   return {
     uri: post.uri,
     webUrl: `https://bsky.app/profile/${handle}/post/${post.uri.split("/").pop() ?? ""}`,
-    text: post.record?.text ?? "",
+    textHtml: renderRichText(post.record?.text ?? "", post.record?.facets),
     createdAt: post.record?.createdAt ?? row.createdAt,
     handle,
     displayName: post.author.displayName ?? handle,
@@ -394,7 +391,7 @@ function cardHtml(card: Card): string {
         <a href="https://bsky.app/profile/${escapeHtml(card.handle)}" target="_blank" rel="noreferrer">${escapeHtml(card.displayName)}</a>
         &nbsp;@${escapeHtml(card.handle)}
       </div>
-      ${card.text ? `<p class="text">${escapeHtml(card.text)}</p>` : ""}
+      ${card.textHtml ? `<p class="text">${card.textHtml}</p>` : ""}
       ${mediaHtml(card)}
       <div class="stamp">
         <span>${escapeHtml(formatDate(card.createdAt))}</span>

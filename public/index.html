@@ -420,7 +420,18 @@ main {
   margin: 0 0 18px;
   white-space: pre-wrap;
   max-width: 60ch;
+  overflow-wrap: break-word;
 }
+
+/* Mentions, links and hashtags. Blue rather than amber, so they read as links
+   and leave amber to mean depth. */
+.text a {
+  color: var(--mark);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--mark) 30%, transparent);
+}
+
+.text a:hover { border-bottom-color: var(--mark); }
 
 .media {
   display: grid;

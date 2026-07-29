@@ -1,3 +1,5 @@
+import type { Facet } from "./richtext.ts";
+
 const APPVIEW = "https://public.api.bsky.app";
 const PLC = "https://plc.directory";
 
@@ -310,7 +312,13 @@ export interface PostView {
   uri: string;
   cid: string;
   author: { did: string; handle: string; displayName?: string; avatar?: string };
-  record?: { createdAt?: string; text?: string; embed?: RecordEmbed };
+  record?: {
+    createdAt?: string;
+    text?: string;
+    embed?: RecordEmbed;
+    /** Byte-indexed mention/link/tag ranges. See `richtext.ts`. */
+    facets?: Facet[];
+  };
   embed?: unknown;
   likeCount?: number;
   repostCount?: number;
