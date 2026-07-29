@@ -4,7 +4,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-2.3.1-black)]()
+[![Version](https://img.shields.io/badge/version-2.4.0-black)]()
 [![Status](https://img.shields.io/badge/status-Beta-yellow)]()
 [![Changelog](https://img.shields.io/badge/changelog-blue)](./CHANGELOG.md)
 
@@ -196,6 +196,7 @@ npm install
 npm run dev          # esbuild watch + static server on http://127.0.0.1:8000
 npm run typecheck    # must pass; no test suite yet
 npm run build        # minified bundle into public/app.js
+npm run icon         # regenerate the iOS icon after changing the mark
 ```
 
 There is no `.env` and nothing to configure — the app has no secrets and no
@@ -214,4 +215,6 @@ server-side settings.
 | `src/app.ts` | UI: setup, digging, cards, settings |
 | `public/index.html` | Page shell and all styling |
 | `public/client-metadata.json` | OAuth client identity; must match the deployed URL |
+| `public/apple-touch-icon.png` | 180px icon for iOS; `npm run icon` regenerates it |
+| `tools/make-icon.mjs` | Rasterises the mark to PNG, with no image library |
 | `public/app.js` | Built bundle, committed for static hosting |

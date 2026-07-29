@@ -26,6 +26,16 @@
   object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="theme-color" content="#0a0a0b">
+
+<!-- Inline SVG icon, so there is no binary to fetch and nothing to keep in sync.
+     Three bars rather than the four in the header mark: at 16px a 7px bar is
+     barely over one pixel, and four of them smear into a grey block. The dark
+     tile is what keeps the pale bars visible on a light browser tab. -->
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%230a0a0b'/><rect x='12' y='17' width='40' height='7' rx='3.5' fill='%23f7f7f8' opacity='.92'/><rect x='12' y='30' width='28' height='7' rx='3.5' fill='%23f7f7f8' opacity='.5'/><rect x='12' y='43' width='40' height='7' rx='3.5' fill='%23f7f7f8' opacity='.28'/><circle cx='44' cy='33.5' r='8' fill='%23ffb224'/></svg>">
+<!-- iOS ignores SVG here, so this one is a real PNG. It matters more than
+     decoration: an installed site gets far gentler storage eviction than a
+     bookmarked one, and this index is expensive to rebuild. -->
+<link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png">
 <!-- Declares the page as already-dark, so browsers and extensions that offer to
      darken pages can detect there is nothing to do. -->
 <meta name="color-scheme" content="dark">
@@ -111,6 +121,12 @@ h1 { margin: 0; line-height: 1; }
 
 /* A real button, so the back-to-top affordance is keyboard reachable. */
 .wordmark {
+  display: inline-flex;
+  /* Baseline, not centre: a replaced element's baseline is its bottom edge, so
+     this sits the mark's foot on the same line the letters stand on. "Altostrata"
+     has no descenders, so that is also its visual bottom. */
+  align-items: baseline;
+  gap: 8px;
   font-family: var(--serif);
   font-weight: 300;
   font-size: 27px;
@@ -124,8 +140,32 @@ h1 { margin: 0; line-height: 1; }
   transition: color 0.15s ease;
 }
 
+/* Same three-bar geometry as the favicon, but cropped to the artwork instead of
+   padded inside a tile. The favicon needs that margin so it sits well in a
+   rounded icon; here it only made the mark look shrunken — the glyph filled about
+   half the box it was given.
+   The bars keep their own colour so hover tints only the word, leaving the amber
+   dot legible instead of dissolving into an all-amber mark. */
+/* Keyed to the cap height of the word beside it — 19px tall against a measured
+   18.6px cap at 27px Newsreader. Filling the line box instead made the mark
+   overpower the logotype. Width follows from the 40:33 artwork ratio. */
+.wordmark .mark {
+  width: 23px;
+  height: auto;
+  flex: none;
+  /* Optical overshoot. Sitting the mark's flat foot exactly on the baseline reads
+     a shade high: the word's round letters already dip 0.27px past it, and the
+     baseline falls on a fractional pixel so the bar's edge antialiases while the
+     letters' ink does not. Expressed in em so it tracks the wordmark's size. */
+  transform: translateY(0.045em);
+}
+
 .wordmark:hover { color: var(--amber); }
-.wordmark span { color: var(--amber); }
+
+/* The word and its period must be one flex item, or the gap that separates the
+   mark from the text also pushes the period away from the word. */
+.wordmark .word { display: inline; }
+.wordmark .word span { color: var(--amber); }
 
 .tagline {
   color: var(--dim);
@@ -764,7 +804,7 @@ dialog input[type="text"] { background: var(--ink); }
 
 <header>
   <div class="bar">
-    <h1><button class="wordmark" id="to-top" title="Back to top">Altostrata<span>.</span></button></h1>
+    <h1><button class="wordmark" id="to-top" title="Back to top"><svg class="mark" viewBox="0 0 40 33" aria-hidden="true"><rect x="0" y="0" width="40" height="7" rx="3.5" fill="#f7f7f8" opacity=".92"/><rect x="0" y="13" width="28" height="7" rx="3.5" fill="#f7f7f8" opacity=".5"/><rect x="0" y="26" width="40" height="7" rx="3.5" fill="#f7f7f8" opacity=".28"/><circle cx="32" cy="16.5" r="8" fill="#ffb224"/></svg><span class="word">Altostrata<span>.</span></span></button></h1>
     <div class="tagline" id="tagline">Media posts from your follows, dug up at random</div>
     <div class="controls" id="controls" hidden>
       <button class="dig" id="dig">Dig</button>

@@ -1,5 +1,26 @@
 # Changelog
 
+### v2.4.0 - 2026-07-28
+
+- Added a logo: three stacked bars of decreasing weight with an amber dot resting
+  on the middle one, taken from the depth rail already on every card, so the mark
+  means the same thing the interface does — layers of history, and one find
+- Used it as the favicon, as an inline SVG data URI, so there is no binary to
+  fetch and nothing that can fall out of sync with the page
+- Added a 180px `apple-touch-icon.png`, because iOS ignores SVG there. This is
+  worth more than decoration: an installed site gets far gentler storage eviction
+  than a bookmarked one, and rebuilding a 116,000-post index is expensive
+- Added `npm run icon` and `tools/make-icon.mjs`, which paints the mark pixel by
+  pixel and writes the PNG chunks directly, so the icon is reproducible without an
+  image library
+- Placed the mark beside the wordmark, sized to the logotype's cap height: 19px
+  tall against a measured 18.6px cap, with its foot on the text baseline plus a
+  0.045em optical overshoot. The wordmark itself is unchanged at 27px
+- The header mark is cropped to the artwork while the favicon keeps a padded tile.
+  Reusing the padded viewBox inline looked shrunken, because the glyph filled only
+  about half the box it was given. Crop for inline use, pad for tiles
+- The favicon's tile is dark, so its pale bars stay visible on a light browser tab
+
 ### v2.3.1 - 2026-07-28
 
 Findings from a full pass over the codebase for bugs and weaknesses.

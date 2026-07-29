@@ -1,11 +1,12 @@
 {
   "name": "altostrata",
-  "version": "2.3.1",
+  "version": "2.4.0",
   "private": true,
   "type": "module",
   "description": "Rediscover old media posts from the people you follow on Bluesky, entirely in your browser",
   "scripts": {
     "build": "esbuild src/app.ts --bundle --format=esm --target=es2022 --minify --outfile=public/app.js",
+    "icon": "node tools/make-icon.mjs 180 public/apple-touch-icon.png",
     "dev": "esbuild src/app.ts --bundle --format=esm --target=es2022 --sourcemap --outfile=public/app.js --watch=forever --servedir=public",
     "typecheck": "tsc --noEmit"
   },
