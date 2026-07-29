@@ -1,5 +1,42 @@
 # Changelog
 
+### v2.6.0 - 2026-07-29
+
+- **Clicking a handle now digs only that account.** A "Digging @handle" chip
+  appears with a Clear control, and every Dig click stays scoped to that
+  author until you clear it or start a new/reset index. Uses the `by_author`
+  index that already existed on `posts` but had no query behind it
+- **Bookmarking now excludes a post from future digs**, the same as liking or
+  reposting. This needed a schema fix: the exclusion store used to key rows by
+  URI alone, so a post could carry only one reason — a post that was both
+  liked and bookmarked would lose its bookmark exclusion the moment "Include
+  liked" re-admitted the like. Exclusions are now keyed by `[uri, reason]`,
+  migrated automatically from the old shape on first load. Bookmarks made
+  before this release, or from another client, are backfilled once on sign-in
+- **Like, repost and bookmark buttons are visibly muted while signed out.**
+  Previously they looked identical whether or not you could act on them;
+  clicking still opens the sign-in dialog either way
+- **The depth gauge marks real month and year boundaries** instead of even
+  quarter-marks. Year boundaries are labelled; month ticks appear too for any
+  account indexed across less than three years, past which they'd just be
+  noise
+- **Reworked the mobile header.** Only the wordmark and Dig button (plus the
+  author filter chip, when active) stay pinned to the top; the age filter,
+  toggles and account controls scroll away underneath like ordinary content,
+  rather than eating a quarter of the screen permanently. Index/Sign in/Sign
+  out collapse to icons at this width
+- **Swipe left or right in the image viewer** to move between a post's
+  images, alongside the existing arrow keys and on-screen chevrons
+- **Tapping anywhere outside the image now closes the viewer.** It previously
+  required an exact click on the dialog's own backdrop, so most of what
+  visually read as blank space around the caption bar did nothing
+- Fixed Dig's scroll-to-top not completing on mobile: it now waits a frame
+  for the new cards to lay out before starting the scroll, rather than racing
+  the browser's own reflow
+- Fixed a second, unrelated block of dead space at the bottom of the page: an
+  empty status-message slot below the results still reserved 80px of padding
+  with nothing in it
+
 ### v2.5.1 - 2026-07-28
 
 - Restored the full four-bar logo in the header, matching the original mockup:

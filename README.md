@@ -4,7 +4,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-2.5.1-black)]()
+[![Version](https://img.shields.io/badge/version-2.6.0-black)]()
 [![Status](https://img.shields.io/badge/status-Beta-yellow)]()
 [![Changelog](https://img.shields.io/badge/changelog-blue)](./CHANGELOG.md)
 
@@ -88,10 +88,14 @@ Four design consequences worth knowing:
 
 - **Random selection across all of time**, not a reverse-chronological window.
   Post age is irrelevant to selection except for the minimum-age floor.
-- **Excludes anything you liked or reposted**, read from your own repo. Repeat
-  runs only scan back to the highest record key already seen, so syncing
-  30,000 likes is expensive once and cheap thereafter. Likes can be re-admitted
-  with a toggle when you want to revisit favourites; reposts stay hidden.
+- **Excludes anything you liked, reposted or bookmarked**, read from your own
+  repo for likes and reposts, and backfilled from the AppView for bookmarks
+  once you sign in. Repeat runs only scan back to the highest record key
+  already seen, so syncing 30,000 likes is expensive once and cheap
+  thereafter. Likes can be re-admitted with a toggle when you want to revisit
+  favourites; reposts and bookmarks stay hidden either way.
+- **Dig within one account.** Clicking a handle scopes every subsequent Dig to
+  just that person until you clear the filter or start a new index.
 - **Original-quality downloads.** The Download button pulls the actual file the
   artist uploaded via `com.atproto.sync.getBlob` — not the CDN's re-encoded
   JPEG. Transparent PNGs stay transparent and video comes down as the source
@@ -116,8 +120,9 @@ Four design consequences worth knowing:
   have been shown is instant and leaves the index and exclusions intact.
 - **Per-author caps** so one prolific account can't fill a page.
 - **Depth gauge** on each card showing where the post sits within that
-  account's *indexed* history — a post near the bottom of the rail is close to
-  the oldest thing Altostrata has found for that person.
+  account's *indexed* history, marked at real month and year boundaries — a
+  post near the bottom of the rail is close to the oldest thing Altostrata has
+  found for that person.
 - **Export and import.** The whole index round-trips through a JSON file, for
   moving between browsers or surviving storage eviction.
 - **Self-healing index.** Posts the AppView no longer returns are deleted
@@ -135,9 +140,6 @@ Four design consequences worth knowing:
   so nobody benefits from anyone else's crawl.
 - **The tab must stay open while crawling.** Progress is saved continuously, so
   closing it loses only the page in flight.
-- **Bookmarked posts are not excluded yet.** Saved Posts live on the AppView
-  rather than in your repo, so the anonymous crawl cannot see them. Signing in
-  makes them readable, so this is unbuilt rather than impossible.
 - **Unlikes are not detected.** Removing a like leaves a stale exclusion until
   the exclusion table is rebuilt.
 - **Your blocks and mutes are not applied to the crawl.** The backfill reads
@@ -164,7 +166,8 @@ background while you browse.
 | **Older than** | Minimum age floor; `now` disables it |
 | **Allow repeats** | Include posts already surfaced |
 | **Include liked** | Re-admit posts you liked; reposts stay hidden either way |
-| **Click an image** | Open it uncropped in an overlay; arrows page through the post |
+| **Click a handle** | Dig only that account until you Clear the filter |
+| **Click an image** | Open it uncropped in an overlay; arrows or swipe page through the post |
 | **Play** | Load and play a video post's original file |
 | **Download** | Save the original file for that image or video |
 | **Like / Repost / Bookmark** | Acts on your account; prompts sign-in if needed |
