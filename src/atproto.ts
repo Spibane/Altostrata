@@ -358,6 +358,8 @@ export interface PostView {
     embed?: RecordEmbed;
     /** Byte-indexed mention/link/tag ranges. See `richtext.ts`. */
     facets?: Facet[];
+    /** BCP-47 tags the author declared. Used only when there's exactly one, unambiguous. */
+    langs?: string[];
   };
   embed?: unknown;
   likeCount?: number;

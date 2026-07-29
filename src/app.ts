@@ -257,6 +257,8 @@ interface Card {
   webUrl: string;
   /** Already-escaped HTML, with mentions, links and hashtags as anchors. */
   textHtml: string;
+  /** Only set when the author declared exactly one language, so it's unambiguous. */
+  textLang: string | null;
   createdAt: string;
   authorDid: string;
   handle: string;
@@ -282,6 +284,19 @@ function depthOf(row: ShuffleRow): number | null {
   return Math.min(1, Math.max(0, (Date.parse(row.createdAt) - oldest) / span));
 }
 
+/**
+ * A single, well-formed BCP-47 tag, or null. Post text renders inside a
+ * document declared `lang="en"` with nothing marking the many non-English (and
+ * non-Latin-script) posts an art-follow feed surfaces — 3.1.2 requires that be
+ * identified where it's known. Only applied when the author declared exactly
+ * one language, so this never guesses.
+ */
+function singleTextLang(langs: string[] | undefined): string | null {
+  if (!langs || langs.length !== 1) return null;
+  const tag = langs[0];
+  return tag && /^[a-zA-Z]{2,3}(-[a-zA-Z0-9]+)*$/.test(tag) ? tag : null;
+}
+
 function toCard(post: PostView, row: ShuffleRow): Card {
   // Refs are zipped into the images by record position, so each image carries
   // its own. `targets.refs` is then rebuilt from the *rendered* images, keeping
@@ -305,6 +320,7 @@ function toCard(post: PostView, row: ShuffleRow): Card {
     uri: post.uri,
     webUrl: `https://bsky.app/profile/${handle}/post/${post.uri.split("/").pop() ?? ""}`,
     textHtml: renderRichText(post.record?.text ?? "", post.record?.facets),
+    textLang: singleTextLang(post.record?.langs),
     createdAt: post.record?.createdAt ?? row.createdAt,
     authorDid: post.author.did,
     handle,
@@ -386,11 +402,20 @@ function gaugeHtml(card: Card): string {
         : `<span class="notch-month" style="top:${notch.pct.toFixed(2)}%"></span>`,
     )
     .join("");
-  return `<div class="gauge" title="Position within this account's indexed history">
-    <span class="cap top">now</span>
-    ${notchesHtml}
-    <span class="tick" style="top:${fromTop.toFixed(1)}%"></span>
-    <span class="cap bottom">${oldestYear}</span>
+  // A `title` on a plain div is not reliably exposed as a name by any AT, and
+  // the children were bare, unrelated spans — a screen reader read the whole
+  // thing as the disembodied string "now 2023 2022" with the one thing the
+  // widget exists to convey (the tick's position) carried entirely by inline
+  // `style`. `role="img"` plus one composed `aria-label` gives it a single,
+  // real text equivalent; the decorative children are hidden from that name.
+  const gaugeLabel =
+    `Roughly ${Math.round(fromTop)}% of the way back through @${card.handle}'s indexed ` +
+    `history, which runs from ${oldestYear} to now`;
+  return `<div class="gauge" role="img" aria-label="${escapeHtml(gaugeLabel)}" title="Position within this account's indexed history">
+    <span class="cap top" aria-hidden="true">now</span>
+    <span aria-hidden="true">${notchesHtml}</span>
+    <span class="tick" aria-hidden="true" style="top:${fromTop.toFixed(1)}%"></span>
+    <span class="cap bottom" aria-hidden="true">${oldestYear}</span>
   </div>`;
 }
 
@@ -411,24 +436,32 @@ function mediaHtml(card: Card): string {
           : "";
 
       // A video poster is a server-chosen frame and frequently misleading, so the
-      // thumbnail is only ever a placeholder for the real player.
+      // thumbnail is only ever a placeholder for the real player. Empty alt
+      // when the author gave none, rather than the invented label "Video": the
+      // play button already carries `aria-label="Play video"`, so the poster
+      // itself is decorative until it's replaced by the actual `<video>`.
       if (playable && i === 0) {
         const ratio = playable.aspectRatio
           ? ` style="aspect-ratio:${playable.aspectRatio.toFixed(4)}"`
           : "";
         return `<figure class="video"${ratio}>
-          <img src="${escapeHtml(image.thumb)}" alt="${escapeHtml(image.alt || "Video")}" loading="lazy">
+          <img src="${escapeHtml(image.thumb)}" alt="${escapeHtml(image.alt)}" loading="lazy">
           <button class="play" data-play="${escapeHtml(card.uri)}" title="Play video"
             aria-label="Play video">${ICONS.play}</button>${grab}
         </figure>`;
       }
 
       // Still a real link: a plain click opens the viewer, but Cmd or middle click
-      // keeps working as a link to the original.
+      // keeps working as a link to the original. Empty alt when the author gave
+      // none — inventing "Untitled image" both fed a screen reader a claim
+      // that isn't true and became the link's whole accessible name, so every
+      // alt-less image on a page produced an identically-named link. The link's
+      // own purpose is named directly instead; the image's alt, honest and
+      // possibly empty, no longer has to carry double duty.
       return `<figure>
         <a href="${escapeHtml(image.full)}" target="_blank" rel="noreferrer"
-           data-zoom="${escapeHtml(card.uri)}" data-index="${i}">
-          <img src="${escapeHtml(image.thumb)}" alt="${escapeHtml(image.alt || "Untitled image")}" loading="lazy">
+           aria-label="View larger" data-zoom="${escapeHtml(card.uri)}" data-index="${i}">
+          <img src="${escapeHtml(image.thumb)}" alt="${escapeHtml(image.alt)}" loading="lazy">
         </a>${grab}
       </figure>`;
     })
@@ -454,23 +487,31 @@ function actionsHtml(card: Card): string {
     on: boolean,
     title: string,
     count?: number,
-  ): string =>
-    `<button class="act ${kind}" data-act="${action}" data-uri="${uri}" ` +
-    `${signedOut ? 'data-signed-out="1" ' : ""}aria-pressed="${on}" title="${
-      signedOut ? "Sign in to " + title.toLowerCase() : title
-    }">${glyph}` +
-    `${count ? `<span class="count">${formatCount(count)}</span>` : ""}</button>`;
+  ): string => {
+    const label = signedOut ? `Sign in to ${title.toLowerCase()}` : title;
+    return (
+      `<button class="act ${kind}" data-act="${action}" data-uri="${uri}" ` +
+      // Name-from-content wins over `title` for a button, and the SVG is
+      // aria-hidden — so with a count present, the accessible name silently
+      // became the number ("1.2K") instead of the button's purpose. aria-label
+      // pins it explicitly; the count span is hidden from that computation.
+      `${signedOut ? 'data-signed-out="1" ' : ""}aria-pressed="${on}" aria-label="${escapeHtml(
+        label,
+      )}" title="${escapeHtml(label)}">${glyph}` +
+      `${count ? `<span class="count" aria-hidden="true">${formatCount(count)}</span>` : ""}</button>`
+    );
+  };
 
   // Always offered when there is anything to fetch. The count only appears when
   // there is more than one file, but the label span is always present so status
   // text has somewhere to go; CSS hides it while empty.
+  const downloadAllLabel =
+    card.originals > 1 ? `Download all ${card.originals} originals` : "Download the original file";
   const downloadAll =
     card.originals > 0
-      ? `<button class="act" data-all="${uri}" title="${
-          card.originals > 1
-            ? `Download all ${card.originals} originals`
-            : "Download the original file"
-        }">${ICONS.download}<span class="label">${
+      ? `<button class="act" data-all="${uri}" aria-label="${escapeHtml(
+          downloadAllLabel,
+        )}" title="${escapeHtml(downloadAllLabel)}">${ICONS.download}<span class="label" aria-hidden="true">${
           card.originals > 1 ? card.originals : ""
         }</span></button>`
       : "";
@@ -481,16 +522,25 @@ function actionsHtml(card: Card): string {
     ${act("mark", "bookmark", ICONS.mark, state?.bookmarked === true, "Bookmark")}
     ${downloadAll}
     <a class="act open" href="${escapeHtml(card.webUrl)}" target="_blank" rel="noreferrer"
-       title="Open on Bluesky">${ICONS.open}</a>
+       aria-label="Open on Bluesky" title="Open on Bluesky">${ICONS.open}</a>
   </div>`;
 }
 
 function cardHtml(card: Card): string {
   const extra = card.images.length > 4 ? `+${card.images.length - 4} more` : "";
-  return `<article class="find">
+  // Twelve `<article>`s with no heading inside any of them read to a screen
+  // reader as twelve identical, untitled regions — heading navigation, the
+  // primary way AT users skim a page, found nothing to jump between. `.age`
+  // already looks like a heading (30px serif); it just wasn't tagged as one.
+  // The visible text is unchanged — the handle is appended only for the
+  // article's accessible name, via a visually-hidden span.
+  const cardId = `find-${card.uri.replace(/[^a-zA-Z0-9]/g, "-")}`;
+  return `<article class="find" aria-labelledby="${cardId}">
     ${gaugeHtml(card)}
     <div>
-      <div class="age">${escapeHtml(formatAge(card.createdAt))}</div>
+      <h2 class="age" id="${cardId}">${escapeHtml(formatAge(card.createdAt))}<span class="visually-hidden"> — @${escapeHtml(
+        card.handle,
+      )}</span></h2>
       <div class="byline">
         ${
           card.avatar
@@ -499,11 +549,17 @@ function cardHtml(card: Card): string {
         }
         <span>
           <a href="https://bsky.app/profile/${escapeHtml(card.handle)}" target="_blank" rel="noreferrer">${escapeHtml(card.displayName)}</a>
-          &nbsp;<a class="handle" href="#" data-dig-author="${escapeHtml(card.authorDid)}"
-             data-dig-handle="${escapeHtml(card.handle)}" title="Dig only @${escapeHtml(card.handle)}">@${escapeHtml(card.handle)}</a>
+          &nbsp;<button type="button" class="handle" data-dig-author="${escapeHtml(card.authorDid)}"
+             data-dig-handle="${escapeHtml(card.handle)}" aria-label="Dig only @${escapeHtml(
+               card.handle,
+             )}" title="Dig only @${escapeHtml(card.handle)}">@${escapeHtml(card.handle)}</button>
         </span>
       </div>
-      ${card.textHtml ? `<p class="text">${card.textHtml}</p>` : ""}
+      ${
+        card.textHtml
+          ? `<p class="text"${card.textLang ? ` lang="${escapeHtml(card.textLang)}"` : ""}>${card.textHtml}</p>`
+          : ""
+      }
       ${mediaHtml(card)}
       <div class="stamp">
         <span>${escapeHtml(formatDate(card.createdAt))}</span>
@@ -534,9 +590,13 @@ function cardHtml(card: Card): string {
  * to animate against.
  */
 function scrollToTop(): void {
+  // Checked fresh on every call, not cached: the preference can change at
+  // runtime, and this is the one full-viewport motion in the app that fires on
+  // every single dig.
+  const behavior = matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      window.scrollTo({ top: 0, behavior });
     });
   });
 }
@@ -634,6 +694,11 @@ async function dig(afterMessage?: string): Promise<void> {
     }
 
     ui.results.innerHTML = cards.map(cardHtml).join("");
+    // Every dig replaces this element's contents outright, which previously
+    // dropped keyboard focus to <body> with nothing marking that a new page had
+    // loaded. `#results` is focusable only via `tabindex="-1"`, so this doesn't
+    // add a stop to normal Tab order.
+    ui.results.focus();
     // Not awaited into the catch below: the cards are already on screen, so a
     // failure here (a full quota, say) is a seen-state problem, not a load
     // failure, and painting "Could not load posts" over a rendered page would
@@ -871,6 +936,9 @@ async function playVideo(button: HTMLButtonElement): Promise<void> {
         `${info.alt ? ` aria-label="${escapeHtml(info.alt)}"` : ""}` +
         ` src="${escapeHtml(src)}"></video>`,
     );
+    // Activating Play with the keyboard removed the focused element outright,
+    // dropping focus to `body` with nothing to say where it went.
+    figure.querySelector("video")?.focus();
     button.remove();
   };
 
@@ -1077,9 +1145,12 @@ ui.results.addEventListener("click", (event) => {
     openViewer(zoom.dataset.zoom ?? "", Number(zoom.dataset.index ?? 0));
     return;
   }
-  const handle = node.closest<HTMLAnchorElement>("a[data-dig-author]");
+  // A `<button>` now, not an `<a href="#">` — it performs an in-page filter
+  // action, not navigation, and a link here read as one to both sighted users
+  // (identical styling to the genuinely-navigating name link beside it) and
+  // assistive tech (announced as "link" while doing a button's job).
+  const handle = node.closest<HTMLButtonElement>("button[data-dig-author]");
   if (handle) {
-    event.preventDefault();
     const did = handle.dataset.digAuthor;
     const digHandle = handle.dataset.digHandle;
     if (did && digHandle) {
@@ -1152,8 +1223,20 @@ async function syncBookmarks(): Promise<void> {
   }
 }
 
+/** Keeps `aria-invalid` in step with an error's visibility, not just its text. */
+function setFieldError(field: HTMLInputElement, error: HTMLElement, message: string | null): void {
+  if (message === null) {
+    error.hidden = true;
+    field.removeAttribute("aria-invalid");
+    return;
+  }
+  error.textContent = message;
+  error.hidden = false;
+  field.setAttribute("aria-invalid", "true");
+}
+
 function openAuth(): void {
-  ui.authError.hidden = true;
+  setFieldError(ui.authHandle, ui.authError, null);
   ui.authFallback.hidden = true;
   void getMeta("owner_handle").then((owner) => {
     if (owner && !ui.authHandle.value) ui.authHandle.value = owner;
@@ -1169,7 +1252,7 @@ ui.authForm.addEventListener("submit", async (event) => {
   const input = ui.authHandle.value.trim();
   if (!input) return;
 
-  ui.authError.hidden = true;
+  setFieldError(ui.authHandle, ui.authError, null);
   ui.authFallback.hidden = true;
   ui.authGo.disabled = true;
   ui.authGo.textContent = "Waiting for Bluesky";
@@ -1182,13 +1265,15 @@ ui.authForm.addEventListener("submit", async (event) => {
     // Re-hydrate so the buttons reflect real viewer state rather than blanks.
     await dig("<strong>Signed in.</strong> Likes, reposts and bookmarks are live.");
   } catch (err) {
-    ui.authError.hidden = false;
-    ui.authError.textContent =
+    setFieldError(
+      ui.authHandle,
+      ui.authError,
       err instanceof PopupBlockedError
         ? "The sign-in window was blocked or closed."
         : err instanceof Error
           ? err.message
-          : String(err);
+          : String(err),
+    );
     ui.authFallback.hidden = false;
   } finally {
     ui.authGo.disabled = false;
@@ -1217,9 +1302,15 @@ function showProgress(progress: CrawlProgress): void {
   if (progress.fraction === null) {
     ui.track.classList.add("indeterminate");
     ui.fill.style.width = "";
+    // Absent, not zero: an unset aria-valuenow is the correct ARIA encoding for
+    // an indeterminate progressbar, and a stale number left over from a
+    // previous determinate phase would otherwise announce a false percentage.
+    ui.track.removeAttribute("aria-valuenow");
   } else {
     ui.track.classList.remove("indeterminate");
-    ui.fill.style.width = `${Math.round(progress.fraction * 100)}%`;
+    const percent = Math.round(progress.fraction * 100);
+    ui.fill.style.width = `${percent}%`;
+    ui.track.setAttribute("aria-valuenow", String(percent));
   }
 }
 
@@ -1306,8 +1397,7 @@ async function runCrawl(handle: string, options: { deep: boolean }): Promise<voi
       ui.note.innerHTML = `<strong>The crawl stopped early.</strong> ${escapeHtml(message)}`;
       hideProgress();
     } else {
-      ui.setupError.hidden = false;
-      ui.setupError.textContent = message;
+      setFieldError(ui.handle, ui.setupError, message);
       hideProgress();
     }
     // Deliberately not rethrown. The failure is already reported above, and none
@@ -1341,7 +1431,7 @@ ui.setupForm.addEventListener("submit", (event) => {
   event.preventDefault();
   const handle = ui.handle.value.trim();
   if (!handle) return;
-  ui.setupError.hidden = true;
+  setFieldError(ui.handle, ui.setupError, null);
   void startFresh(handle);
 });
 
@@ -1354,12 +1444,15 @@ async function startFresh(handle: string): Promise<void> {
     // or a deleted account, since resolution did not happen until inside the
     // crawl. The confirm below is the point of no return, so nothing that can
     // fail on bad input may come after it.
-    ui.setupError.hidden = true;
+    setFieldError(ui.handle, ui.setupError, null);
     try {
       await resolveHandle(normalised);
     } catch (err) {
-      ui.setupError.hidden = false;
-      ui.setupError.textContent = `Could not find @${normalised}. Your existing index is untouched.`;
+      setFieldError(
+        ui.handle,
+        ui.setupError,
+        `Could not find @${normalised}. Your existing index is untouched.`,
+      );
       console.warn("Handle resolution failed", err);
       return;
     }
@@ -1516,8 +1609,7 @@ ui.file.addEventListener("change", async () => {
     if (ui.setup.hidden) {
       ui.note.innerHTML = `<strong>Could not import that file.</strong> ${escapeHtml(message)}`;
     } else {
-      ui.setupError.hidden = false;
-      ui.setupError.textContent = `Could not import that file. ${message}`;
+      setFieldError(ui.handle, ui.setupError, `Could not import that file. ${message}`);
     }
   }
 });
@@ -1553,7 +1645,7 @@ ui.liked.addEventListener("change", () => void dig());
 // "Allow repeats" sat here with no listener while its two neighbours in the same
 // cluster re-dug instantly, so it read as a broken checkbox.
 ui.seen.addEventListener("change", () => void dig());
-ui.toTop.addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
+ui.toTop.addEventListener("click", () => scrollToTop());
 
 /**
  * On mobile, `#pinned-row` is `position: fixed` (see the 700px query) so it can
