@@ -1079,6 +1079,17 @@ dialog::backdrop { background: rgb(4 4 5 / 0.76); }
 #close-settings.sheet-close { padding: 8px; flex: none; }
 .sheet-close .icon { width: 16px; height: 16px; }
 
+/* Thematic break for a group that carries no heading. `.sheet-sub`'s own
+   border-top already separates the headed sections, but export/import has no
+   heading to hang one on — so without this its two buttons sat flush against
+   the kept-posts button above and the three read as one unrelated row. */
+.sheet-rule {
+  height: 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 22px 0 18px;
+}
+
 .sheet dl {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -1510,6 +1521,7 @@ button.author-row:hover { background: var(--raised); }
       <button class="ghost" id="view-kept">View kept posts</button>
     </div>
 
+    <hr class="sheet-rule">
     <div class="row">
       <button class="ghost" id="export">Export index</button>
       <button class="ghost" id="import">Import index</button>
