@@ -41,6 +41,7 @@ export interface CrawlProgress {
   fraction: number | null;
   postsAdded: number;
   requests: number;
+  failedAccounts: number;
 }
 
 export interface CrawlOptions {
@@ -62,6 +63,7 @@ export interface CrawlResult {
   postsAdded: number;
   requests: number;
   pendingAccounts: number;
+  failedAccounts: number;
   stopped: boolean;
 }
 
@@ -119,16 +121,31 @@ async function pool<T>(
   await Promise.all(runners);
 }
 
+interface AuthorCrawlResult {
+  inserted: number;
+  /**
+   * True only when the very first request for this account failed — a later
+   * page failing after some pages already succeeded is just an early stop, not
+   * a broken account, and retries normally on the next crawl. A permanent
+   * failure (suspended, deleted, blocked) previously vanished into
+   * `console.warn`, with `complete` left at 0 and every future crawl silently
+   * re-attempting and re-failing the same accounts forever, while the UI's
+   * "Fully indexed" count never resolved and never said why.
+   */
+  failed: boolean;
+}
+
 /** Crawls up to `depth` pages further back through one author's media history. */
 async function crawlAuthor(
   author: AuthorRow,
   depth: number,
   filter: MediaFilter,
   signal: AbortSignal | undefined,
-): Promise<number> {
+): Promise<AuthorCrawlResult> {
   let cursor = author.cursor ?? undefined;
   let inserted = 0;
   let complete = false;
+  let failed = false;
 
   for (let page = 0; page < depth; page += 1) {
     let result;
@@ -136,6 +153,7 @@ async function crawlAuthor(
       result = await getAuthorMediaPage(author.did, cursor, filter, signal);
     } catch (err) {
       if (err instanceof AbortedError) throw err;
+      if (page === 0) failed = true;
       console.warn(`${author.handle}: ${String(err).slice(0, 140)}`);
       break;
     }
@@ -153,7 +171,7 @@ async function crawlAuthor(
 
   await updateAuthorProgress(author.did, cursor ?? null, complete);
   if (inserted > 0) await refreshAuthorRange(author.did);
-  return inserted;
+  return { inserted, failed };
 }
 
 /**
@@ -165,16 +183,16 @@ async function topUpAuthor(
   author: AuthorRow,
   filter: MediaFilter,
   signal: AbortSignal | undefined,
-): Promise<number> {
+): Promise<AuthorCrawlResult> {
   try {
     const result = await getAuthorMediaPage(author.did, undefined, filter, signal);
     const inserted = await insertPosts(extractMediaPosts(result.feed, author.did));
     if (inserted > 0) await refreshAuthorRange(author.did);
-    return inserted;
+    return { inserted, failed: false };
   } catch (err) {
     if (err instanceof AbortedError) throw err;
     console.warn(`${author.handle}: ${String(err).slice(0, 140)}`);
-    return 0;
+    return { inserted: 0, failed: true };
   }
 }
 
@@ -233,9 +251,10 @@ export async function crawl(handle: string, options: CrawlOptions): Promise<Craw
 
   let postsAdded = 0;
   let announcedPosts = false;
+  let failedAccounts = 0;
 
   const report = (phase: CrawlPhase, message: string, fraction: number | null): void => {
-    onProgress?.({ phase, message, fraction, postsAdded, requests: requestsMade() });
+    onProgress?.({ phase, message, fraction, postsAdded, requests: requestsMade(), failedAccounts });
   };
 
   const countPosts = (added: number): void => {
@@ -279,7 +298,9 @@ export async function crawl(handle: string, options: CrawlOptions): Promise<Craw
 
     report("history", `Digging through ${pending.length} accounts`, pending.length ? 0 : 1);
     await pool(pending, concurrency, async (author) => {
-      countPosts(await crawlAuthor(author, depth, filter, signal));
+      const result = await crawlAuthor(author, depth, filter, signal);
+      countPosts(result.inserted);
+      if (result.failed) failedAccounts += 1;
       done += 1;
       report(
         "history",
@@ -294,7 +315,9 @@ export async function crawl(handle: string, options: CrawlOptions): Promise<Craw
         let checked = 0;
         report("topup", `Checking ${finished.length} accounts for new posts`, 0);
         await pool(finished, concurrency, async (author) => {
-          countPosts(await topUpAuthor(author, filter, signal));
+          const result = await topUpAuthor(author, filter, signal);
+          countPosts(result.inserted);
+          if (result.failed) failedAccounts += 1;
           checked += 1;
           report(
             "topup",
@@ -306,7 +329,13 @@ export async function crawl(handle: string, options: CrawlOptions): Promise<Craw
     }
 
     const stillPending = (await pendingAuthors()).length;
-    report("done", `${postsAdded} posts added`, 1);
+    report(
+      "done",
+      failedAccounts > 0
+        ? `${postsAdded} posts added — ${failedAccounts} account${failedAccounts === 1 ? "" : "s"} could not be read`
+        : `${postsAdded} posts added`,
+      1,
+    );
 
     return {
       did,
@@ -314,6 +343,7 @@ export async function crawl(handle: string, options: CrawlOptions): Promise<Craw
       postsAdded,
       requests: requestsMade(),
       pendingAccounts: stillPending,
+      failedAccounts,
       stopped: false,
     };
   } catch (err) {
@@ -325,6 +355,7 @@ export async function crawl(handle: string, options: CrawlOptions): Promise<Craw
         postsAdded,
         requests: requestsMade(),
         pendingAccounts: (await pendingAuthors()).length,
+        failedAccounts,
         stopped: true,
       };
     }

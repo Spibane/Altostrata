@@ -648,7 +648,45 @@ main {
   margin-bottom: 14px;
 }
 
+/* Random selection is blind to content, so a labelled post otherwise appeared
+   unblurred and unwarned in the middle of an ordinary page. Blurred in place —
+   with the label's own name on the cover — rather than skipped outright, so
+   seeing it stays a choice made on this page (see the Index panel's Sensitive
+   content setting) instead of a mystery routed through Bluesky. */
+.veiled { position: relative; margin-bottom: 14px; }
+.veiled .media { margin-bottom: 0; }
+.veiled:not([data-revealed]) .media {
+  filter: blur(40px) saturate(0.6);
+  pointer-events: none;
+}
+.veil-reveal {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  background: color-mix(in srgb, var(--ink) 55%, transparent);
+  border: 1px solid var(--control-line);
+  border-radius: 8px;
+  color: var(--text);
+}
+.veiled[data-revealed] .veil-reveal { display: none; }
+.veil-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.veil-action { font-family: var(--sans); font-weight: 500; font-size: 14px; }
+
 .media.n1 { grid-template-columns: 1fr; }
+/* Fallback for the rare post with no aspect-ratio metadata at all — an inline
+   `style` from app.ts wins when there is one. */
+.media.n1 figure:not([style]) { aspect-ratio: 4 / 5; }
 .media.n2, .media.n3, .media.n4 { grid-template-columns: 1fr 1fr; }
 .media.n3 > figure:first-child { grid-column: span 2; }
 
@@ -1167,12 +1205,17 @@ dialog input[type="text"] { background: var(--ink); }
         <!-- The visible label is `.field-label`, hidden on narrow viewports (see
              the 700px query) — without this, the select's accessible name goes
              empty there, since a hidden native <label> contributes nothing. -->
+        <!-- CLAUDE.md's own stated purpose is surfacing 2022 artwork — a floor
+             that couldn't express anything past "2 years" couldn't reach the
+             app's own headline case. -->
         <select id="age" aria-label="Older than">
           <option value="0">now</option>
           <option value="30">1 month</option>
           <option value="90" selected>3 months</option>
           <option value="365">1 year</option>
           <option value="730">2 years</option>
+          <option value="1095">3 years</option>
+          <option value="1825">5 years</option>
         </select>
       </label>
       <div class="toggles">
@@ -1240,6 +1283,12 @@ dialog input[type="text"] { background: var(--ink); }
       media posts you have never liked or reposted &mdash; then shows them at random,
       from any point in time.
     </p>
+    <p class="fine">
+      First artwork appears in about two minutes; a full crawl of a large follow list
+      can take twelve or more and keeps going in the background while you browse.
+      Progress is saved continuously, so closing this tab only loses the page in flight
+      &mdash; reopening it picks up right where the crawl left off.
+    </p>
     <form id="setup-form">
       <label class="visually-hidden" for="handle">Your Bluesky handle</label>
       <!-- `autocomplete="username"`, not "off": this collects the same data as
@@ -1255,7 +1304,11 @@ dialog input[type="text"] { background: var(--ink); }
       <b>Everything stays in this browser.</b> There is no account, no password and no
       server &mdash; the index is built from public AT Protocol records and stored locally
       in IndexedDB. Nothing about what you have liked ever leaves your machine.
-      Already have an export? <button class="ghost" id="import-first" type="button">Import an index</button>
+    </p>
+    <p class="fine">
+      Not ready to commit? <button class="ghost" id="try-demo" type="button">Try it with @bsky.app</button>
+      &mdash; 11 follows, done in about twenty seconds &mdash; or
+      <button class="ghost" id="import-first" type="button">import an index</button> you already exported.
     </p>
   </section>
 
@@ -1272,6 +1325,19 @@ dialog input[type="text"] { background: var(--ink); }
   <div class="sheet">
     <h2 id="settings-title">Index</h2>
     <dl id="stats"></dl>
+
+    <label class="field" for="label-policy">
+      Sensitive content
+      <select id="label-policy">
+        <option value="blur">Blur, tap to show</option>
+        <option value="show">Show always</option>
+        <option value="hide">Hide entirely</option>
+      </select>
+    </label>
+    <p class="caption">
+      Applies to posts a Bluesky labeller has flagged. The crawl reads anonymously,
+      so it cannot see your own mutes or blocks.
+    </p>
 
     <div class="row">
       <button class="ghost" id="deepen">Dig deeper</button>

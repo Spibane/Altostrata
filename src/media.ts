@@ -43,6 +43,17 @@ function pickSource(node: EmbedView): EmbedView {
 }
 
 /**
+ * True for a quote post — `record` (a bare quote) or `recordWithMedia` (media
+ * plus a quote). `pickSource` already extracts the media half for display;
+ * this only answers whether a quoted post exists, so a card can say so rather
+ * than silently dropping what the image was a response *to*.
+ */
+export function isQuotePost(embed: unknown): boolean {
+  const type = (embed as { $type?: string } | undefined)?.$type ?? "";
+  return type.startsWith("app.bsky.embed.record");
+}
+
+/**
  * Media can sit directly on the embed or nested under `media` for
  * recordWithMedia. `$type` carries a `#view` suffix, so every check is by prefix.
  *

@@ -348,10 +348,17 @@ export interface RecordEmbed {
   media?: RecordEmbed;
 }
 
+/** A moderation label as `getPosts` already returns it — no extra request needed to read these. */
+export interface Label {
+  val: string;
+  /** True on a label record that revokes an earlier one with the same `val`. */
+  neg?: boolean;
+}
+
 export interface PostView {
   uri: string;
   cid: string;
-  author: { did: string; handle: string; displayName?: string; avatar?: string };
+  author: { did: string; handle: string; displayName?: string; avatar?: string; labels?: Label[] };
   record?: {
     createdAt?: string;
     text?: string;
@@ -360,8 +367,11 @@ export interface PostView {
     facets?: Facet[];
     /** BCP-47 tags the author declared. Used only when there's exactly one, unambiguous. */
     langs?: string[];
+    /** Present when this post is a reply — rendering it exactly like a standalone post can be actively misleading. */
+    reply?: { parent?: { uri?: string } };
   };
   embed?: unknown;
+  labels?: Label[];
   likeCount?: number;
   repostCount?: number;
   replyCount?: number;

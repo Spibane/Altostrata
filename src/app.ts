@@ -1,4 +1,11 @@
-import { AbortedError, fetchBlob, getPosts, resolveHandle, type PostView } from "./atproto.ts";
+import {
+  AbortedError,
+  fetchBlob,
+  getPosts,
+  resolveHandle,
+  type Label,
+  type PostView,
+} from "./atproto.ts";
 import { escapeHtml, renderRichText } from "./richtext.ts";
 import { crawl, type CrawlProgress } from "./crawl.ts";
 import {
@@ -23,6 +30,7 @@ import {
   downloadOriginal,
   extractImages,
   extractVideo,
+  isQuotePost,
   originalRefs,
   type DownloadTarget,
   type VideoRef,
@@ -40,6 +48,7 @@ import {
   requestPersistence,
   resetAll,
   resetSeen,
+  setMeta,
   shuffle,
   shuffleByAuthor,
   stats,
@@ -74,6 +83,7 @@ const ui = {
   diggingHandle: el("digging-handle"),
   clearDigFilter: el<HTMLButtonElement>("clear-dig-filter"),
   openSettings: el<HTMLButtonElement>("open-settings"),
+  labelPolicy: el<HTMLSelectElement>("label-policy"),
   progress: el("progress"),
   track: el("track"),
   fill: el("fill"),
@@ -85,6 +95,7 @@ const ui = {
   start: el<HTMLButtonElement>("start"),
   setupError: el("setup-error"),
   importFirst: el<HTMLButtonElement>("import-first"),
+  tryDemo: el<HTMLButtonElement>("try-demo"),
   results: el("results"),
   note: el("note"),
   settings: el<HTMLDialogElement>("settings"),
@@ -272,6 +283,11 @@ interface Card {
   authorOldest: string | null;
   authorNewest: string | null;
   originals: number;
+  /** Human-readable moderation label names on this post or its author, if any. */
+  labels: string[];
+  /** A reply renders identically to a standalone post otherwise, which on an art feed is often actively misleading. */
+  isReply: boolean;
+  isQuote: boolean;
 }
 
 /** Position of this post within the author's indexed history, 0 = oldest. */
@@ -291,6 +307,42 @@ function depthOf(row: ShuffleRow): number | null {
  * identified where it's known. Only applied when the author declared exactly
  * one language, so this never guesses.
  */
+// ---------------------------------------------------------------------------
+// Moderation labels
+//
+// Read nowhere before this: `getPosts` already returns them on both the post
+// and its author, so surfacing them costs no extra request. Selection is
+// random and blind to content, which makes a labelled post appearing
+// unblurred and unwarned a real gap, not just a missing nicety.
+// ---------------------------------------------------------------------------
+
+/** Bluesky's own wording for its global label values; anything else shows its raw value. */
+const LABEL_NAMES: Record<string, string> = {
+  porn: "Adult content",
+  sexual: "Sexually suggestive",
+  nudity: "Nudity",
+  "graphic-media": "Graphic media",
+  gore: "Graphic violence",
+};
+
+function labelNames(post: PostView): string[] {
+  const all: Label[] = [...(post.labels ?? []), ...(post.author.labels ?? [])];
+  const seen = new Set<string>();
+  for (const label of all) {
+    if (label.neg) continue;
+    seen.add(LABEL_NAMES[label.val] ?? label.val);
+  }
+  return [...seen];
+}
+
+export type LabelPolicy = "blur" | "show" | "hide";
+
+let labelPolicy: LabelPolicy = "blur";
+
+function applyLabelPolicy(policy: string | undefined): void {
+  labelPolicy = policy === "show" || policy === "hide" ? policy : "blur";
+}
+
 function singleTextLang(langs: string[] | undefined): string | null {
   if (!langs || langs.length !== 1) return null;
   const tag = langs[0];
@@ -334,6 +386,9 @@ function toCard(post: PostView, row: ShuffleRow): Card {
     authorOldest: row.authorOldest,
     authorNewest: row.authorNewest,
     originals: refs.filter((ref) => ref !== null).length,
+    labels: labelNames(post),
+    isReply: post.record?.reply !== undefined,
+    isQuote: isQuotePost(post.embed),
   };
 }
 
@@ -458,7 +513,15 @@ function mediaHtml(card: Card): string {
       // alt-less image on a page produced an identically-named link. The link's
       // own purpose is named directly instead; the image's alt, honest and
       // possibly empty, no longer has to carry double duty.
-      return `<figure>
+      //
+      // A single-image post's tile has no crop (multi-image tiles already force
+      // a square via CSS), so with no reserved height it collapsed to nothing
+      // until the image decoded — the most visible layout shift on a page whose
+      // whole point is looking at images. `aspectRatio` was already parsed and
+      // sat unused for anything but video.
+      const singleRatio =
+        shown.length === 1 && image.aspectRatio ? ` style="aspect-ratio:${image.aspectRatio.toFixed(4)}"` : "";
+      return `<figure${singleRatio}>
         <a href="${escapeHtml(image.full)}" target="_blank" rel="noreferrer"
            aria-label="View larger" data-zoom="${escapeHtml(card.uri)}" data-index="${i}">
           <img src="${escapeHtml(image.thumb)}" alt="${escapeHtml(image.alt)}" loading="lazy">
@@ -466,7 +529,19 @@ function mediaHtml(card: Card): string {
       </figure>`;
     })
     .join("");
-  return `<div class="media n${shown.length}">${items}</div>`;
+  const media = `<div class="media n${shown.length}">${items}</div>`;
+
+  if (card.labels.length === 0 || labelPolicy !== "blur") return media;
+  // A label without a reveal makes labelled content a mystery rather than a
+  // choice; blurring it in place, with the label's own name on the cover,
+  // keeps that choice on this page instead of routing it through Bluesky.
+  return `<div class="veiled" data-veiled="1">
+    ${media}
+    <button class="veil-reveal" type="button" data-reveal="${escapeHtml(card.uri)}">
+      <span class="veil-label">${escapeHtml(card.labels.join(", "))}</span>
+      <span class="veil-action">Show</span>
+    </button>
+  </div>`;
 }
 
 /**
@@ -564,6 +639,11 @@ function cardHtml(card: Card): string {
       <div class="stamp">
         <span>${escapeHtml(formatDate(card.createdAt))}</span>
         ${card.isVideo ? '<span class="badge">video</span>' : ""}
+        <!-- Rendered identically to a standalone post otherwise — on an art feed,
+             a reply or a quote pulled out of its thread can be genuinely
+             incomprehensible or misread as being about something it isn't. -->
+        ${card.isReply ? '<span class="badge" title="This post is a reply">reply</span>' : ""}
+        ${card.isQuote ? '<span class="badge" title="This post quotes another">quote</span>' : ""}
         ${extra ? `<span>${escapeHtml(extra)}</span>` : ""}
       </div>
       ${actionsHtml(card)}
@@ -679,8 +759,13 @@ async function dig(afterMessage?: string): Promise<void> {
       const row = byUri.get(post.uri);
       if (!row) continue;
       const card = toCard(post, row);
-      if (card.images.length > 0) cards.push(card);
-      else unrenderable.push(post.uri);
+      if (card.images.length === 0) unrenderable.push(post.uri);
+      // "Hide" removes a labelled post from the page entirely rather than
+      // rendering a blurred placeholder for it — treated the same as an
+      // unrenderable post so it doesn't keep consuming a slot on every future
+      // page either.
+      else if (card.labels.length > 0 && labelPolicy === "hide") unrenderable.push(post.uri);
+      else cards.push(card);
     }
 
     if (cards.length === 0) {
@@ -782,15 +867,21 @@ async function handleGrab(button: HTMLButtonElement): Promise<void> {
     button.dataset.state = "done";
     setLabel(button, "Saved");
   } catch (err) {
+    // "Failed" alone gave no reason, and the only explanation went to the
+    // console — a place someone chasing a failed download was unlikely to be
+    // looking, right after a fetch that could have taken thirty seconds.
     button.dataset.state = "failed";
+    const message = err instanceof Error ? err.message : String(err);
     setLabel(button, "Failed");
+    button.title = message;
     console.warn(err);
   } finally {
     button.disabled = false;
     setTimeout(() => {
       delete button.dataset.state;
       setLabel(button, original);
-    }, 2400);
+      button.title = "Download the original file";
+    }, 4000);
   }
 }
 
@@ -801,6 +892,7 @@ async function handleGrabAll(button: HTMLButtonElement): Promise<void> {
   if (!target) return;
 
   const original = labelOf(button);
+  const originalTitle = button.title;
   button.disabled = true;
   button.dataset.busy = "1";
   try {
@@ -808,7 +900,9 @@ async function handleGrabAll(button: HTMLButtonElement): Promise<void> {
     setLabel(button, `${saved} saved`);
   } catch (err) {
     button.dataset.failed = "1";
+    const message = err instanceof Error ? err.message : String(err);
     setLabel(button, "Failed");
+    button.title = message;
     console.warn(err);
   } finally {
     button.disabled = false;
@@ -816,7 +910,8 @@ async function handleGrabAll(button: HTMLButtonElement): Promise<void> {
     setTimeout(() => {
       delete button.dataset.failed;
       setLabel(button, original);
-    }, 2400);
+      button.title = originalTitle;
+    }, 4000);
   }
 }
 
@@ -880,11 +975,22 @@ async function applyAction(button: HTMLButtonElement): Promise<void> {
       button.setAttribute("aria-pressed", String(state.bookmarked));
     }
   } catch (err) {
-    // The glyph and count stay put; failure shows as the red state plus a note.
+    // The glyph and count stay put; failure shows as the red state. `#note`
+    // alone put the explanation as far as twelve cards away from the button
+    // that failed — the button's own title/aria-label now carries the actual
+    // reason too, restored once the red state clears.
     button.dataset.failed = "1";
     const message = err instanceof Error ? err.message : String(err);
+    const originalTitle = button.title;
+    const originalLabel = button.getAttribute("aria-label");
+    button.title = message;
+    button.setAttribute("aria-label", `${originalLabel ?? "Action"} failed: ${message}`);
     ui.note.innerHTML = `<strong>That didn't go through.</strong> ${escapeHtml(message)}`;
-    setTimeout(() => delete button.dataset.failed, 3000);
+    setTimeout(() => {
+      delete button.dataset.failed;
+      button.title = originalTitle;
+      if (originalLabel !== null) button.setAttribute("aria-label", originalLabel);
+    }, 4000);
   } finally {
     delete button.dataset.busy;
     button.disabled = false;
@@ -1112,6 +1218,7 @@ ui.lbDownload.addEventListener("click", async () => {
   const target = targets.get(viewing.uri);
   if (!target) return;
   const original = labelOf(ui.lbDownload);
+  const originalTitle = ui.lbDownload.title;
   ui.lbDownload.disabled = true;
   ui.lbDownload.dataset.busy = "1";
   try {
@@ -1119,7 +1226,9 @@ ui.lbDownload.addEventListener("click", async () => {
     setLabel(ui.lbDownload, "Saved");
   } catch (err) {
     ui.lbDownload.dataset.failed = "1";
+    const message = err instanceof Error ? err.message : String(err);
     setLabel(ui.lbDownload, "Failed");
+    ui.lbDownload.title = message;
     console.warn(err);
   } finally {
     ui.lbDownload.disabled = false;
@@ -1127,7 +1236,8 @@ ui.lbDownload.addEventListener("click", async () => {
     setTimeout(() => {
       delete ui.lbDownload.dataset.failed;
       setLabel(ui.lbDownload, original);
-    }, 2400);
+      ui.lbDownload.title = originalTitle;
+    }, 4000);
   }
 });
 
@@ -1157,6 +1267,11 @@ ui.results.addEventListener("click", (event) => {
       setDigFilter({ did, handle: digHandle });
       void dig();
     }
+    return;
+  }
+  const reveal = node.closest<HTMLButtonElement>("button[data-reveal]");
+  if (reveal) {
+    reveal.closest<HTMLElement>(".veiled")?.setAttribute("data-revealed", "1");
     return;
   }
   const play = node.closest<HTMLButtonElement>("button.play");
@@ -1361,6 +1476,7 @@ async function runCrawl(handle: string, options: { deep: boolean }): Promise<voi
     onFirstPosts();
     await refreshStats();
 
+    let failedAccounts = shallow.failedAccounts;
     if (options.deep && shallow.pendingAccounts > 0) {
       const deep = await crawl(handle, {
         depth: DEEP_DEPTH,
@@ -1373,14 +1489,23 @@ async function runCrawl(handle: string, options: { deep: boolean }): Promise<voi
         hideProgress();
         return;
       }
+      failedAccounts += deep.failedAccounts;
     }
 
+    // Accounts that failed permanently (suspended, deleted, blocked) used to
+    // vanish into the console — "Index complete" could be true of everything
+    // except the accounts that never got read at all, with nothing here to
+    // say so.
     showProgress({
       phase: "done",
-      message: "Index complete",
+      message:
+        failedAccounts > 0
+          ? `Index complete — ${failedAccounts} account${failedAccounts === 1 ? "" : "s"} could not be read`
+          : "Index complete",
       fraction: 1,
       postsAdded: 0,
       requests: 0,
+      failedAccounts,
     });
     setTimeout(hideProgress, 2500);
   } catch (err) {
@@ -1433,6 +1558,13 @@ ui.setupForm.addEventListener("submit", (event) => {
   if (!handle) return;
   setFieldError(ui.handle, ui.setupError, null);
   void startFresh(handle);
+});
+
+// A fast, real end-to-end run costs one tap instead of trusting a twelve-minute
+// promise cold — bsky.app follows 11 accounts and finishes in well under 20s.
+ui.tryDemo.addEventListener("click", () => {
+  setFieldError(ui.handle, ui.setupError, null);
+  void startFresh("bsky.app");
 });
 
 async function startFresh(handle: string): Promise<void> {
@@ -1490,7 +1622,19 @@ async function refreshStats(): Promise<void> {
     ["Still unseen", s.unseen.toLocaleString()],
     ["Oldest post", s.oldest ? s.oldest.slice(0, 10) : "none yet", true],
   ];
-  if (usage) rows.push(["Browser storage", formatBytes(usage.usage)]);
+  if (usage) {
+    rows.push([
+      "Browser storage",
+      usage.quota > 0 ? `${formatBytes(usage.usage)} of ${formatBytes(usage.quota)}` : formatBytes(usage.usage),
+    ]);
+  }
+  // `requestPersistence()` ran at boot but its result went nowhere — a browser
+  // that refused eviction protection left the index one Safari week-away-from
+  // the tab from being silently cleared, with nothing here to say so.
+  rows.push([
+    "Eviction protection",
+    storagePersisted ? "Granted" : "Not granted — export if you care about this index",
+  ]);
 
   ui.statsList.innerHTML = rows
     .map(
@@ -1513,6 +1657,12 @@ ui.openSettings.addEventListener("click", () => {
 });
 
 ui.closeSettings.addEventListener("click", () => ui.settings.close());
+
+ui.labelPolicy.addEventListener("change", () => {
+  applyLabelPolicy(ui.labelPolicy.value);
+  void setMeta("label_policy", labelPolicy);
+  void dig();
+});
 
 ui.deepen.addEventListener("click", async () => {
   const handle = await getMeta("owner_handle");
@@ -1582,6 +1732,20 @@ ui.file.addEventListener("change", async () => {
   const file = ui.file.files?.[0];
   if (!file) return;
 
+  // `resetAll()` inside `importIndex` erases the whole existing index with no
+  // confirmation of its own — the same destructive step `startFresh` already
+  // gates behind a confirm, just reached through a different button. Only
+  // asked when there is actually something to lose: `ui.importFirst` (the
+  // setup-screen path) only ever appears with nothing indexed yet.
+  const existing = await stats();
+  if (existing.posts > 0) {
+    const ok = window.confirm(
+      `This browser holds an index of ${existing.posts.toLocaleString()} posts. ` +
+        `Importing ${file.name} will replace it entirely. Continue?`,
+    );
+    if (!ok) return;
+  }
+
   ui.settings.close();
   showProgress({
     phase: "identity",
@@ -1589,12 +1753,20 @@ ui.file.addEventListener("change", async () => {
     fraction: null,
     postsAdded: 0,
     requests: 0,
+    failedAccounts: 0,
   });
 
   try {
     const parsed = JSON.parse(await file.text()) as IndexFile;
     const result = await importIndex(parsed, (message) =>
-      showProgress({ phase: "history", message, fraction: null, postsAdded: 0, requests: 0 }),
+      showProgress({
+        phase: "history",
+        message,
+        fraction: null,
+        postsAdded: 0,
+        requests: 0,
+        failedAccounts: 0,
+      }),
     );
     hideProgress();
     showBrowsing();
@@ -1665,8 +1837,14 @@ new ResizeObserver(([entry]) => {
   );
 }).observe(ui.pinnedRow);
 
+/** Whether the browser granted eviction protection — shown in the Index panel, since the call used to run and its result go straight to the floor. */
+let storagePersisted = false;
+
 async function boot(): Promise<void> {
-  void requestPersistence();
+  storagePersisted = await requestPersistence();
+
+  applyLabelPolicy(await getMeta("label_policy"));
+  ui.labelPolicy.value = labelPolicy;
 
   // Runs before the first dig so hydration can carry viewer state, and because a
   // redirect callback has to be consumed out of the URL early.
