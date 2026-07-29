@@ -1,5 +1,108 @@
 # Changelog
 
+### v2.7.0 - 2026-07-29
+
+A full sweep across bugs, WCAG 2.2 AA accessibility, usability and security,
+each landed as its own commit.
+
+**Bugs and correctness**
+
+- Fixed a deploy-day tab wedge: a blocked IndexedDB open fires neither
+  `success` nor `error`, so opening the database while another tab still held
+  an older version hung forever behind a bare header with no error. Every
+  connection now steps aside for a newer one instead of blocking it.
+- Fixed `startFresh` erasing the existing index before validating the new
+  handle — a typo destroyed a finished crawl and then failed. It resolves the
+  handle first now, and the confirm states what's at stake and points at Export
+- Fixed a stale dig being able to blank a newer dig's rendered cards and revoke
+  a playing video's object URL, because the empty-index note wasn't covered by
+  the same supersession guard as everything else in `dig()`
+- Fixed `listBookmarks` looping forever against a server that ignores its
+  cursor, which hung sign-in permanently
+- Fixed downloads occasionally saving a different image than the one clicked:
+  originals were matched to images by position, but the view list and the
+  record's blob list each drop unusable entries independently
+- Fixed the lightbox swipe's suppress flag getting stuck after a touch swipe
+  (which produces no click to clear it), eating the next tap-to-close
+- Fixed "Allow repeats" having no change listener while its two neighbours
+  re-dug instantly
+- Fixed the crawl progress strip staying on screen forever after Stop
+- Fixed `loadSets` racing two concurrent first callers into rival Sets, so one's
+  writes could become invisible to selection until reload
+- Fixed retry backoff ignoring both the abort signal (Stop looked inert for up
+  to 8s) and the `Retry-After` header on a 429
+- Fixed posts that hydrate with no renderable image silently consuming a page
+  slot forever, and "still unseen" drifting because deleted posts kept their
+  seen rows
+
+**WCAG 2.2 AA**
+
+- `--faint` measured 3.5–3.8:1 against its two backdrops, under 4.5:1 — raised
+  to a passing value; added `--control-line` so input/select borders and the
+  depth gauge's rail actually meet the 3:1 non-text contrast floor
+- Signed-out like/repost/save buttons used opacity to mute, compositing to
+  2.2:1 on a button that's never actually disabled — replaced with a muted
+  colour at full contrast
+- Like and Repost were accessibly named "1.2K" and "342" (name-from-content
+  beat `title` once a count was present) — every action button now has an
+  explicit `aria-label`
+- The "Older than" select had no accessible name once its visible label hides
+  on mobile; same fix for the icon-only Index/Sign in/Sign out buttons
+- Added live regions to `#note` and the crawl progress bar, both previously
+  silent to screen readers for the app's longest-running operations
+- Added `scroll-padding-top` so keyboard focus can no longer land hidden
+  underneath the sticky/fixed header
+- Fixed the two toggle checkboxes' hit areas overlapping on desktop, and the
+  header overflowing the viewport by ~25px at 320px width with nowhere to wrap
+- Gave the depth gauge a real text alternative (`role="img"` + one composed
+  label) in place of a `title` on a plain div; gave each card a heading and an
+  accessible name; replaced the invented alt text "Untitled image" with an
+  honest empty string plus a directly-named zoom link
+- Converted the clickable handle from an `a href="#"` to a real `<button>`
+- Fixed the crawl's sweep animation and both scroll-to-top calls ignoring
+  `prefers-reduced-motion`
+- Fixed `#handle`'s `autocomplete="off"` defeating autofill for the same data
+  `#auth-handle` already collects with `autocomplete="username"`; associated
+  both error messages with their inputs
+- Read `record.langs` for the first time, applied when a post declares exactly
+  one language
+
+**Usability**
+
+- Moderation labels were read nowhere in the codebase — a labelled post could
+  appear unblurred and unwarned in an ordinary random dig. `getPosts` already
+  returns them; labelled media now blurs in place with the label's name and a
+  tap to reveal, controlled by a new "Sensitive content" setting
+- Accounts that fail to crawl permanently (suspended, deleted, blocked) used to
+  vanish into the console with `complete` stuck at 0 forever — the crawl now
+  counts them and says so on completion
+- Like/repost/bookmark and download failures now carry their actual reason on
+  the button itself, not just in a note up to twelve cards away
+- Added onboarding copy stating the real time a full crawl takes and that
+  progress is checkpointed, plus a one-tap "Try it with @bsky.app" demo
+- Importing an index now confirms before replacing an existing one, matching
+  Start Over's confirm for the same erasure
+- Single-image posts now reserve their aspect ratio, fixing the layout shift
+  every dig caused as images decoded
+- Added 3 and 5 year options to the age floor — CLAUDE.md's own stated purpose
+  is surfacing 2022 artwork, which the filter couldn't previously reach
+- The Index panel now shows eviction-protection status and storage quota
+  alongside usage
+- Replies and quote posts get a small badge instead of rendering identically
+  to a standalone post
+
+**Security hardening** (no confirmed vulnerability — escaping is complete and
+CSP already blocks a slip from executing; everything below is defense in depth)
+
+- Applied `safeHref`'s scheme check to image, avatar and lightbox URLs, not
+  just facet links
+- Validated a PDS's `serviceEndpoint` to https — it comes from the author's own
+  DID document and was used unchecked for every blob fetch
+- Made download-extension resolution allowlist-only; an author's record could
+  previously claim a mime type that saved as `.html`
+- Added a one-line framebuster, since `frame-ancestors` in a meta CSP is
+  silently ignored and GitHub Pages can't send it as a header
+
 ### v2.6.1 - 2026-07-29
 
 - Added the author's avatar to each card, beside the name and handle. It comes

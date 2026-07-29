@@ -4,7 +4,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-2.6.1-black)]()
+[![Version](https://img.shields.io/badge/version-2.7.0-black)]()
 [![Status](https://img.shields.io/badge/status-Beta-yellow)]()
 [![Changelog](https://img.shields.io/badge/changelog-blue)](./CHANGELOG.md)
 
@@ -96,6 +96,14 @@ Four design consequences worth knowing:
   favourites; reposts and bookmarks stay hidden either way.
 - **Dig within one account.** Clicking a handle scopes every subsequent Dig to
   just that person until you clear the filter or start a new index.
+- **Moderation labels blur in place**, with the label's own name on the cover
+  and a tap to reveal — configurable in the Index panel to always show or hide
+  labelled posts entirely instead. The crawl is anonymous, so this can't see
+  your own mutes and blocks.
+- **Replies and quote posts are marked**, rather than rendering identically to
+  a standalone post — which on an art feed can otherwise be genuinely
+  misleading (a reply pulled out of its thread, or a quote missing what it's
+  quoting).
 - **Original-quality downloads.** The Download button pulls the actual file the
   artist uploaded via `com.atproto.sync.getBlob` — not the CDN's re-encoded
   JPEG. Transparent PNGs stay transparent and video comes down as the source
@@ -134,8 +142,8 @@ Four design consequences worth knowing:
 
 - **Storage can be evicted.** Safari clears IndexedDB for sites not visited for
   roughly a week. Altostrata calls `navigator.storage.persist()`, which Chrome
-  generally grants and Safari generally does not — export if you care about the
-  index.
+  generally grants and Safari generally does not — the Index panel shows
+  whether protection was granted, and export if you care about the index.
 - **Every visitor crawls from scratch.** With no server there is no shared index,
   so nobody benefits from anyone else's crawl.
 - **The tab must stay open while crawling.** Progress is saved continuously, so
