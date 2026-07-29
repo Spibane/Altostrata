@@ -1,5 +1,11 @@
 # Changelog
 
+### v2.6.1 - 2026-07-29
+
+- Added the author's avatar to each card, beside the name and handle. It comes
+  from the hydrated post view, which already carried it, so this costs no extra
+  requests. Posts by accounts with no avatar render without one
+
 ### v2.6.0 - 2026-07-29
 
 - **Clicking a handle now digs only that account.** A "Digging @handle" chip

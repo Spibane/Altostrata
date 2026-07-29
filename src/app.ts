@@ -261,6 +261,7 @@ interface Card {
   authorDid: string;
   handle: string;
   displayName: string;
+  avatar: string | null;
   images: ViewImage[];
   isVideo: boolean;
   likeCount: number;
@@ -305,6 +306,7 @@ function toCard(post: PostView, row: ShuffleRow): Card {
     authorDid: post.author.did,
     handle,
     displayName: post.author.displayName ?? handle,
+    avatar: post.author.avatar ?? null,
     images,
     isVideo,
     likeCount: post.likeCount ?? 0,
@@ -482,9 +484,16 @@ function cardHtml(card: Card): string {
     <div>
       <div class="age">${escapeHtml(formatAge(card.createdAt))}</div>
       <div class="byline">
-        <a href="https://bsky.app/profile/${escapeHtml(card.handle)}" target="_blank" rel="noreferrer">${escapeHtml(card.displayName)}</a>
-        &nbsp;<a class="handle" href="#" data-dig-author="${escapeHtml(card.authorDid)}"
-           data-dig-handle="${escapeHtml(card.handle)}" title="Dig only @${escapeHtml(card.handle)}">@${escapeHtml(card.handle)}</a>
+        ${
+          card.avatar
+            ? `<img class="avatar" src="${escapeHtml(card.avatar)}" alt="" loading="lazy">`
+            : ""
+        }
+        <span>
+          <a href="https://bsky.app/profile/${escapeHtml(card.handle)}" target="_blank" rel="noreferrer">${escapeHtml(card.displayName)}</a>
+          &nbsp;<a class="handle" href="#" data-dig-author="${escapeHtml(card.authorDid)}"
+             data-dig-handle="${escapeHtml(card.handle)}" title="Dig only @${escapeHtml(card.handle)}">@${escapeHtml(card.handle)}</a>
+        </span>
       </div>
       ${card.textHtml ? `<p class="text">${card.textHtml}</p>` : ""}
       ${mediaHtml(card)}
