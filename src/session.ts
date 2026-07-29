@@ -293,3 +293,44 @@ export async function unbookmark(uri: string): Promise<void> {
     proxy: true,
   });
 }
+
+export interface BookmarkedSubject {
+  uri: string;
+  cid: string;
+}
+
+/**
+ * Pages through the signed-in account's existing bookmarks, so ones made
+ * before Altostrata could track them (or from another client) can be
+ * backfilled into the exclusion store. The response shape is inferred from
+ * the lexicon name — like `createBookmark`/`deleteBookmark`, it has not been
+ * exercised against the live API, so both `subject` and `item` are accepted
+ * as the record's field name until this runs against a real account.
+ */
+export async function listBookmarks(): Promise<BookmarkedSubject[]> {
+  const out: BookmarkedSubject[] = [];
+  let cursor: string | undefined;
+  for (;;) {
+    const search = new URLSearchParams({ limit: "100" });
+    if (cursor) search.set("cursor", cursor);
+    const data = (await xrpc("app.bsky.bookmark.getBookmarks", {
+      search,
+      proxy: true,
+    })) as {
+      bookmarks?: Array<{
+        subject?: { uri?: string; cid?: string };
+        item?: { uri?: string; cid?: string };
+      }>;
+      cursor?: string;
+    };
+    const rows = data.bookmarks ?? [];
+    if (rows.length === 0) break;
+    for (const row of rows) {
+      const subject = row.subject ?? row.item;
+      if (subject?.uri && subject.cid) out.push({ uri: subject.uri, cid: subject.cid });
+    }
+    if (!data.cursor) break;
+    cursor = data.cursor;
+  }
+  return out;
+}

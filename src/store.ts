@@ -7,7 +7,7 @@
  * distinctive, not current.
  */
 const DB_NAME = "strata";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 export interface AuthorRow {
   did: string;
@@ -49,7 +49,7 @@ function openDb(): Promise<IDBDatabase> {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onerror = () => reject(request.error ?? new Error("Could not open IndexedDB"));
     request.onsuccess = () => resolve(request.result);
-    request.onupgradeneeded = () => {
+    request.onupgradeneeded = (event) => {
       const db = request.result;
 
       if (!db.objectStoreNames.contains("meta")) {
@@ -65,12 +65,33 @@ function openDb(): Promise<IDBDatabase> {
         posts.createIndex("by_created", "createdAt");
         posts.createIndex("by_rnd", "rnd");
       }
-      if (!db.objectStoreNames.contains("excluded")) {
-        db.createObjectStore("excluded", { keyPath: "uri" });
-      }
       // Kept out of `posts` so clearing seen state is a single store wipe.
       if (!db.objectStoreNames.contains("seen")) {
         db.createObjectStore("seen", { keyPath: "uri" });
+      }
+
+      if (db.objectStoreNames.contains("excluded")) {
+        // v1 kept one row per uri, so a post could carry only one exclusion
+        // reason — "Include Liked" could wrongly re-admit a post that was
+        // excluded for a like but was *also* bookmarked or reposted. Migrate
+        // to a compound [uri, reason] key so every reason a post is excluded
+        // for survives independently of the others.
+        if (event.oldVersion < 2) {
+          const transaction = request.transaction;
+          if (!transaction) throw new Error("Missing upgrade transaction");
+          const oldStore = transaction.objectStore("excluded");
+          const getAllRequest = oldStore.getAll();
+          getAllRequest.onsuccess = () => {
+            const rows = getAllRequest.result as Array<{ uri: string; reason: string }>;
+            db.deleteObjectStore("excluded");
+            const store = db.createObjectStore("excluded", { keyPath: ["uri", "reason"] });
+            store.createIndex("by_uri", "uri");
+            for (const row of rows) store.put(row);
+          };
+        }
+      } else {
+        const store = db.createObjectStore("excluded", { keyPath: ["uri", "reason"] });
+        store.createIndex("by_uri", "uri");
       }
     };
   });
@@ -111,19 +132,35 @@ function wrap<T>(request: IDBRequest<T>): Promise<T> {
 // ---------------------------------------------------------------------------
 
 let excludedSet: Set<string> | undefined;
+/** `uri reason` pairs, so a second reason for an already-excluded uri still gets inserted. */
+let excludedPairSet: Set<string> | undefined;
 /** Subset of `excludedSet` excluded because of a like, so likes alone can be re-admitted. */
 let likedSet: Set<string> | undefined;
+/** Subset of `excludedSet` excluded for a reason other than a like, so it can never be waived. */
+let nonWaivableSet: Set<string> | undefined;
 let seenSet: Set<string> | undefined;
 
 interface Sets {
   excluded: Set<string>;
+  pairs: Set<string>;
   liked: Set<string>;
+  nonWaivable: Set<string>;
   seen: Set<string>;
 }
 
+function pairKey(uri: string, reason: string): string {
+  return `${uri} ${reason}`;
+}
+
 async function loadSets(): Promise<Sets> {
-  if (excludedSet && likedSet && seenSet) {
-    return { excluded: excludedSet, liked: likedSet, seen: seenSet };
+  if (excludedSet && excludedPairSet && likedSet && nonWaivableSet && seenSet) {
+    return {
+      excluded: excludedSet,
+      pairs: excludedPairSet,
+      liked: likedSet,
+      nonWaivable: nonWaivableSet,
+      seen: seenSet,
+    };
   }
   const db = await openDb();
   const { transaction } = tx(db, ["excluded", "seen"], "readonly");
@@ -134,9 +171,17 @@ async function loadSets(): Promise<Sets> {
     wrap(transaction.objectStore("seen").getAllKeys()),
   ]);
   excludedSet = new Set(excluded.map((row) => row.uri));
+  excludedPairSet = new Set(excluded.map((row) => pairKey(row.uri, row.reason)));
   likedSet = new Set(excluded.filter((row) => row.reason === "like").map((row) => row.uri));
+  nonWaivableSet = new Set(excluded.filter((row) => row.reason !== "like").map((row) => row.uri));
   seenSet = new Set(seenKeys as string[]);
-  return { excluded: excludedSet, liked: likedSet, seen: seenSet };
+  return {
+    excluded: excludedSet,
+    pairs: excludedPairSet,
+    liked: likedSet,
+    nonWaivable: nonWaivableSet,
+    seen: seenSet,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -295,32 +340,48 @@ export async function insertExclusions(
   rows: Array<{ uri: string; reason: string }>,
 ): Promise<number> {
   if (rows.length === 0) return 0;
-  const { excluded, liked } = await loadSets();
+  const { excluded, pairs, liked, nonWaivable } = await loadSets();
   const db = await openDb();
   const { transaction, done } = tx(db, ["excluded"], "readwrite");
   const store = transaction.objectStore("excluded");
 
   let added = 0;
   for (const row of rows) {
-    if (excluded.has(row.uri)) continue;
+    const key = pairKey(row.uri, row.reason);
+    if (pairs.has(key)) continue;
     store.put(row);
+    pairs.add(key);
     excluded.add(row.uri);
     if (row.reason === "like") liked.add(row.uri);
+    else nonWaivable.add(row.uri);
     added += 1;
   }
   await done;
   return added;
 }
 
-/** Used when a like is undone from inside Altostrata, so the post becomes findable again. */
-export async function removeExclusion(uri: string): Promise<void> {
-  const { excluded, liked } = await loadSets();
+/** Used when a like/repost/bookmark is undone from inside Altostrata, so the post becomes findable again — unless another reason still excludes it. */
+export async function removeExclusion(uri: string, reason: string): Promise<void> {
+  const { excluded, pairs, liked, nonWaivable } = await loadSets();
   const db = await openDb();
   const { transaction, done } = tx(db, ["excluded"], "readwrite");
-  transaction.objectStore("excluded").delete(uri);
+  const store = transaction.objectStore("excluded");
+  store.delete([uri, reason]);
+  const remainingRequest = wrap(store.index("by_uri").getAll(uri)) as Promise<
+    Array<{ uri: string; reason: string }>
+  >;
   await done;
-  excluded.delete(uri);
-  liked.delete(uri);
+  const remaining = await remainingRequest;
+
+  pairs.delete(pairKey(uri, reason));
+  if (remaining.length === 0) {
+    excluded.delete(uri);
+    liked.delete(uri);
+    nonWaivable.delete(uri);
+  } else {
+    if (!remaining.some((row) => row.reason === "like")) liked.delete(uri);
+    if (!remaining.some((row) => row.reason !== "like")) nonWaivable.delete(uri);
+  }
 }
 
 export async function clearExclusions(): Promise<void> {
@@ -329,7 +390,9 @@ export async function clearExclusions(): Promise<void> {
   transaction.objectStore("excluded").clear();
   await done;
   excludedSet = new Set();
+  excludedPairSet = new Set();
   likedSet = new Set();
+  nonWaivableSet = new Set();
 }
 
 // ---------------------------------------------------------------------------
@@ -387,13 +450,28 @@ export interface ShuffleRow extends PostRow {
 const SCAN_LIMIT = 40_000;
 
 /**
+ * A like exclusion can be waived by "Include Liked"; a repost or bookmark
+ * exclusion cannot, even on a post that's also liked. Shared between
+ * `shuffle` and `shuffleByAuthor` so the two selection paths can't diverge.
+ */
+function isBlocked(
+  uri: string,
+  includeLiked: boolean,
+  excluded: Set<string>,
+  liked: Set<string>,
+  nonWaivable: Set<string>,
+): boolean {
+  return excluded.has(uri) && !(includeLiked && liked.has(uri) && !nonWaivable.has(uri));
+}
+
+/**
  * Samples the index by walking the random sort key from a random offset and
  * wrapping once. Age floor, exclusions, seen state and the per-author cap are
  * all applied during the scan, so a page never costs more than SCAN_LIMIT rows
  * however picked-over the index gets.
  */
 export async function shuffle(options: ShuffleOptions): Promise<ShuffleRow[]> {
-  const { excluded, liked, seen } = await loadSets();
+  const { excluded, liked, nonWaivable, seen } = await loadSets();
   const cutoff = new Date(Date.now() - options.minAgeDays * 86_400_000).toISOString();
 
   const db = await openDb();
@@ -421,9 +499,7 @@ export async function shuffle(options: ShuffleOptions): Promise<ShuffleRow[]> {
         scanned += 1;
         const row = cursor.value as PostRow;
 
-        // A like exclusion can be waived; a repost exclusion cannot.
-        const blocked =
-          excluded.has(row.uri) && !(options.includeLiked && liked.has(row.uri));
+        const blocked = isBlocked(row.uri, options.includeLiked, excluded, liked, nonWaivable);
 
         const ok =
           row.createdAt < cutoff &&
@@ -445,8 +521,25 @@ export async function shuffle(options: ShuffleOptions): Promise<ShuffleRow[]> {
     await collect(0, start); // wrap around once
   }
 
-  // Deliberately a second transaction: the scan above may have auto-committed
-  // once its last cursor request settled, so author lookups get a fresh one.
+  return hydrateRows(db, picked);
+}
+
+/** Fisher-Yates, so `shuffleByAuthor`'s full scan of one author doesn't return posts in URI order. */
+function shuffleInPlace<T>(items: T[]): T[] {
+  for (let i = items.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [items[i], items[j]] = [items[j] as T, items[i] as T];
+  }
+  return items;
+}
+
+/**
+ * Attaches author.handle/displayName/date-range info to a page of picked
+ * posts. Deliberately a second transaction: the scan that produced `picked`
+ * may have auto-committed once its last cursor request settled, so author
+ * lookups get a fresh one.
+ */
+function hydrateRows(db: IDBDatabase, picked: PostRow[]): Promise<ShuffleRow[]> {
   const authorTx = tx(db, ["authors"], "readonly");
   const authorStore = authorTx.transaction.objectStore("authors");
   return Promise.all(
@@ -462,6 +555,43 @@ export async function shuffle(options: ShuffleOptions): Promise<ShuffleRow[]> {
       };
     }),
   );
+}
+
+/**
+ * Same filters as `shuffle`, scoped to one author via the `by_author` index
+ * instead of sampling `by_rnd`. A single author's post count is small enough
+ * to scan in full and shuffle in memory, rather than needing the
+ * random-offset-with-wraparound trick `shuffle` uses over the whole index.
+ */
+export async function shuffleByAuthor(
+  authorDid: string,
+  options: Omit<ShuffleOptions, "maxPerAuthor">,
+): Promise<ShuffleRow[]> {
+  const { excluded, liked, nonWaivable, seen } = await loadSets();
+  const cutoff = new Date(Date.now() - options.minAgeDays * 86_400_000).toISOString();
+  const db = await openDb();
+
+  const matches: PostRow[] = [];
+  await new Promise<void>((resolve, reject) => {
+    const index = tx(db, ["posts"], "readonly").transaction.objectStore("posts").index("by_author");
+    const cursorRequest = index.openCursor(IDBKeyRange.only(authorDid));
+    cursorRequest.onerror = () => reject(cursorRequest.error);
+    cursorRequest.onsuccess = () => {
+      const cursor = cursorRequest.result;
+      if (!cursor || matches.length >= SCAN_LIMIT) {
+        resolve();
+        return;
+      }
+      const row = cursor.value as PostRow;
+      const blocked = isBlocked(row.uri, options.includeLiked, excluded, liked, nonWaivable);
+      const ok = row.createdAt < cutoff && !blocked && (options.includeSeen || !seen.has(row.uri));
+      if (ok) matches.push(row);
+      cursor.continue();
+    };
+  });
+
+  const picked = shuffleInPlace(matches).slice(0, options.limit);
+  return hydrateRows(db, picked);
 }
 
 // ---------------------------------------------------------------------------
@@ -515,6 +645,9 @@ export async function resetAll(): Promise<void> {
   for (const name of names) transaction.objectStore(name).clear();
   await done;
   excludedSet = new Set();
+  excludedPairSet = new Set();
+  likedSet = new Set();
+  nonWaivableSet = new Set();
   seenSet = new Set();
 }
 
@@ -728,10 +861,12 @@ export async function importIndex(
     await done;
   }
 
-  // All three, so a future change to loadSets that refreshes them independently
-  // cannot leave a stale liked subset behind.
+  // All five, so a future change to loadSets that refreshes them independently
+  // cannot leave a stale subset behind.
   excludedSet = undefined;
+  excludedPairSet = undefined;
   likedSet = undefined;
+  nonWaivableSet = undefined;
   seenSet = undefined;
 
   // Optional: an export from an older build, or a hand-trimmed one, may omit these.

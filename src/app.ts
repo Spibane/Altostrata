@@ -8,6 +8,7 @@ import {
   initAuth,
   isSignedIn,
   like,
+  listBookmarks,
   PopupBlockedError,
   repost,
   signIn,
@@ -40,6 +41,7 @@ import {
   resetAll,
   resetSeen,
   shuffle,
+  shuffleByAuthor,
   stats,
   type IndexFile,
   type ShuffleRow,
@@ -59,12 +61,18 @@ function el<T extends HTMLElement>(id: string): T {
 
 const ui = {
   toTop: el<HTMLButtonElement>("to-top"),
-  controls: el("controls"),
+  pinnedRow: el("pinned-row"),
+  controlsRow1: el("controls-row-1"),
+  controlsRow2: el("controls-row-2"),
   tagline: el("tagline"),
   age: el<HTMLSelectElement>("age"),
   seen: el<HTMLInputElement>("seen"),
   liked: el<HTMLInputElement>("liked"),
   dig: el<HTMLButtonElement>("dig"),
+  digBottom: el<HTMLButtonElement>("dig-bottom"),
+  diggingAs: el("digging-as"),
+  diggingHandle: el("digging-handle"),
+  clearDigFilter: el<HTMLButtonElement>("clear-dig-filter"),
   openSettings: el<HTMLButtonElement>("open-settings"),
   progress: el("progress"),
   track: el("track"),
@@ -250,6 +258,7 @@ interface Card {
   /** Already-escaped HTML, with mentions, links and hashtags as anchors. */
   textHtml: string;
   createdAt: string;
+  authorDid: string;
   handle: string;
   displayName: string;
   images: ViewImage[];
@@ -258,6 +267,7 @@ interface Card {
   repostCount: number;
   depth: number | null;
   authorOldest: string | null;
+  authorNewest: string | null;
   originals: number;
 }
 
@@ -292,6 +302,7 @@ function toCard(post: PostView, row: ShuffleRow): Card {
     webUrl: `https://bsky.app/profile/${handle}/post/${post.uri.split("/").pop() ?? ""}`,
     textHtml: renderRichText(post.record?.text ?? "", post.record?.facets),
     createdAt: post.record?.createdAt ?? row.createdAt,
+    authorDid: post.author.did,
     handle,
     displayName: post.author.displayName ?? handle,
     images,
@@ -300,16 +311,76 @@ function toCard(post: PostView, row: ShuffleRow): Card {
     repostCount: post.repostCount ?? 0,
     depth: depthOf(row),
     authorOldest: row.authorOldest,
+    authorNewest: row.authorNewest,
     originals: refs.length,
   };
+}
+
+interface Notch {
+  pct: number;
+  label: string | null;
+}
+
+const THREE_YEARS_MS = 3 * 365 * 86_400_000;
+
+/**
+ * Real month/year boundaries within an author's indexed range, positioned the
+ * same way as the "you are here" tick (`depthOf`) — newest at 0%, oldest at
+ * 100%. Endpoints are skipped since `gaugeHtml`'s "now"/oldest-year caps
+ * already label them. Month ticks are dropped for authors indexed across more
+ * than ~3 years, where they would otherwise be too dense to read.
+ */
+function gaugeNotches(oldestIso: string, newestIso: string): Notch[] {
+  const oldest = Date.parse(oldestIso);
+  const newest = Date.parse(newestIso);
+  const span = newest - oldest;
+  if (!Number.isFinite(span) || span <= 0) return [];
+
+  const pctOf = (ms: number): number => (1 - (ms - oldest) / span) * 100;
+  const oldestDate = new Date(oldest);
+  const newestDate = new Date(newest);
+  const notches: Notch[] = [];
+  const yearBoundaries = new Set<number>();
+
+  for (let year = oldestDate.getUTCFullYear() + 1; year <= newestDate.getUTCFullYear(); year++) {
+    const ms = Date.UTC(year, 0, 1);
+    if (ms <= oldest || ms >= newest) continue;
+    yearBoundaries.add(ms);
+    notches.push({ pct: pctOf(ms), label: String(year) });
+  }
+
+  if (span <= THREE_YEARS_MS) {
+    let cursor = Date.UTC(oldestDate.getUTCFullYear(), oldestDate.getUTCMonth() + 1, 1);
+    while (cursor < newest) {
+      if (cursor > oldest && !yearBoundaries.has(cursor)) {
+        notches.push({ pct: pctOf(cursor), label: null });
+      }
+      const d = new Date(cursor);
+      cursor = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
+    }
+  }
+
+  return notches;
 }
 
 function gaugeHtml(card: Card): string {
   if (card.depth === null) return '<div class="gauge"></div>';
   const fromTop = (1 - card.depth) * 100;
   const oldestYear = card.authorOldest ? new Date(card.authorOldest).getFullYear() : "";
+  const notches =
+    card.authorOldest && card.authorNewest
+      ? gaugeNotches(card.authorOldest, card.authorNewest)
+      : [];
+  const notchesHtml = notches
+    .map((notch) =>
+      notch.label !== null
+        ? `<span class="notch-year" style="top:${notch.pct.toFixed(2)}%">${notch.label}</span>`
+        : `<span class="notch-month" style="top:${notch.pct.toFixed(2)}%"></span>`,
+    )
+    .join("");
   return `<div class="gauge" title="Position within this account's indexed history">
     <span class="cap top">now</span>
+    ${notchesHtml}
     <span class="tick" style="top:${fromTop.toFixed(1)}%"></span>
     <span class="cap bottom">${oldestYear}</span>
   </div>`;
@@ -362,6 +433,9 @@ function mediaHtml(card: Card): string {
 function actionsHtml(card: Card): string {
   const state = actions.get(card.uri);
   const uri = escapeHtml(card.uri);
+  // Muted rather than hidden or disabled while signed out: the click still opens
+  // the sign-in dialog (see applyAction), which stays discoverable this way.
+  const signedOut = !isSignedIn();
 
   const act = (
     kind: string,
@@ -372,7 +446,9 @@ function actionsHtml(card: Card): string {
     count?: number,
   ): string =>
     `<button class="act ${kind}" data-act="${action}" data-uri="${uri}" ` +
-    `aria-pressed="${on}" title="${title}">${glyph}` +
+    `${signedOut ? 'data-signed-out="1" ' : ""}aria-pressed="${on}" title="${
+      signedOut ? "Sign in to " + title.toLowerCase() : title
+    }">${glyph}` +
     `${count ? `<span class="count">${formatCount(count)}</span>` : ""}</button>`;
 
   // Always offered when there is anything to fetch. The count only appears when
@@ -407,7 +483,8 @@ function cardHtml(card: Card): string {
       <div class="age">${escapeHtml(formatAge(card.createdAt))}</div>
       <div class="byline">
         <a href="https://bsky.app/profile/${escapeHtml(card.handle)}" target="_blank" rel="noreferrer">${escapeHtml(card.displayName)}</a>
-        &nbsp;@${escapeHtml(card.handle)}
+        &nbsp;<a class="handle" href="#" data-dig-author="${escapeHtml(card.authorDid)}"
+           data-dig-handle="${escapeHtml(card.handle)}" title="Dig only @${escapeHtml(card.handle)}">@${escapeHtml(card.handle)}</a>
       </div>
       ${card.textHtml ? `<p class="text">${card.textHtml}</p>` : ""}
       ${mediaHtml(card)}
@@ -431,7 +508,32 @@ function cardHtml(card: Card): string {
  * older dig clearing `targets` after a newer one filled it leaves cards on screen
  * whose Play and Download buttons quietly do nothing.
  */
+/**
+ * Deferred a frame (twice, to be safe across engines) rather than called
+ * immediately after swapping in new cards: on mobile Safari, starting a smooth
+ * scroll before the browser has laid out and painted the new content races the
+ * dynamic toolbar's own resize, and the animation can stop short or no-op
+ * entirely. Letting one paint happen first gives the scroll a settled layout
+ * to animate against.
+ */
+function scrollToTop(): void {
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+  });
+}
+
 let digGeneration = 0;
+
+/** When set, `dig()` scopes selection to one author instead of the whole index. */
+let digFilter: { did: string; handle: string } | undefined;
+
+function setDigFilter(filter: { did: string; handle: string } | undefined): void {
+  digFilter = filter;
+  ui.diggingAs.hidden = !filter;
+  ui.diggingHandle.textContent = filter ? `@${filter.handle}` : "";
+}
 
 /**
  * `afterMessage` is shown once the page has rendered. Callers cannot set the note
@@ -441,21 +543,26 @@ async function dig(afterMessage?: string): Promise<void> {
   const generation = ++digGeneration;
   const superseded = (): boolean => generation !== digGeneration;
 
-  ui.dig.disabled = true;
   // Three characters, exactly as wide as "Dig" in a monospace face. "Digging" was
   // 34px wider, and with the mark now in the header there is not enough slack for
-  // that — every dig bumped the row onto two lines and back.
-  ui.dig.textContent = "···";
+  // that — every dig bumped the row onto two lines and back. Both buttons move in
+  // lockstep, so the trailing button can't be tapped again while the header one shows busy.
+  for (const button of [ui.dig, ui.digBottom]) {
+    button.disabled = true;
+    button.textContent = "···";
+  }
   ui.note.textContent = "";
 
   try {
-    const rows = await shuffle({
+    const options = {
       limit: PAGE_SIZE,
       minAgeDays: Number(ui.age.value),
       includeSeen: ui.seen.checked,
       includeLiked: ui.liked.checked,
-      maxPerAuthor: 2,
-    });
+    };
+    const rows = digFilter
+      ? await shuffleByAuthor(digFilter.did, options)
+      : await shuffle({ ...options, maxPerAuthor: 2 });
 
     if (superseded()) return;
 
@@ -500,17 +607,19 @@ async function dig(afterMessage?: string): Promise<void> {
     ui.results.innerHTML = cards.map(cardHtml).join("");
     await markShown(cards.map((card) => card.uri));
     if (afterMessage) ui.note.innerHTML = afterMessage;
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    scrollToTop();
   } catch (err) {
     if (superseded()) return;
     ui.note.innerHTML = `<strong>Could not load posts.</strong> ${escapeHtml(
       err instanceof Error ? err.message : err,
     )}`;
   } finally {
-    // A superseded dig must not re-enable the button while the newer one runs.
+    // A superseded dig must not re-enable the buttons while the newer one runs.
     if (!superseded()) {
-      ui.dig.disabled = false;
-      ui.dig.textContent = "Dig";
+      for (const button of [ui.dig, ui.digBottom]) {
+        button.disabled = false;
+        button.textContent = "Dig";
+      }
     }
   }
 }
@@ -528,10 +637,20 @@ async function showEmptyNote(): Promise<void> {
     ui.note.innerHTML = `<strong>Nothing indexed yet.</strong> The crawl has not found any media posts.`;
     return;
   }
+  const filterHint = digFilter
+    ? `, or <a href="#" id="empty-clear-filter">clear the @${escapeHtml(digFilter.handle)} filter</a>`
+    : "";
   ui.note.innerHTML =
     `<strong>Nothing left to surface at this depth.</strong> Loosen the age filter, allow repeats, ` +
-    `or dig deeper from the Index panel. ${s.unseen.toLocaleString()} of ${s.posts.toLocaleString()} ` +
-    `indexed posts are still unseen.`;
+    `dig deeper from the Index panel${filterHint}. ${s.unseen.toLocaleString()} of ` +
+    `${s.posts.toLocaleString()} indexed posts are still unseen.`;
+  if (digFilter) {
+    document.getElementById("empty-clear-filter")?.addEventListener("click", (event) => {
+      event.preventDefault();
+      setDigFilter(undefined);
+      void dig();
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -623,7 +742,7 @@ async function applyAction(button: HTMLButtonElement): Promise<void> {
       if (state.likeUri) {
         await unlike(state.likeUri);
         state.likeUri = null;
-        await removeExclusion(uri);
+        await removeExclusion(uri, "like");
       } else {
         state.likeUri = await like({ uri, cid: state.cid });
         await insertExclusions([{ uri, reason: "like" }]);
@@ -633,7 +752,7 @@ async function applyAction(button: HTMLButtonElement): Promise<void> {
       if (state.repostUri) {
         await unrepost(state.repostUri);
         state.repostUri = null;
-        await removeExclusion(uri);
+        await removeExclusion(uri, "repost");
       } else {
         state.repostUri = await repost({ uri, cid: state.cid });
         await insertExclusions([{ uri, reason: "repost" }]);
@@ -643,9 +762,11 @@ async function applyAction(button: HTMLButtonElement): Promise<void> {
       if (state.bookmarked) {
         await unbookmark(uri);
         state.bookmarked = false;
+        await removeExclusion(uri, "bookmark");
       } else {
         await bookmark({ uri, cid: state.cid });
         state.bookmarked = true;
+        await insertExclusions([{ uri, reason: "bookmark" }]);
       }
       button.setAttribute("aria-pressed", String(state.bookmarked));
     }
@@ -794,9 +915,48 @@ ui.lbPrev.addEventListener("click", () => stepViewer(-1));
 ui.lbNext.addEventListener("click", () => stepViewer(1));
 ui.lbClose.addEventListener("click", closeViewer);
 
-// A click landing on the dialog itself is a click on the surround, not the image.
+// Closes on any click that isn't the image or a control — not just a click that
+// lands exactly on the dialog element. `.lb-bar` is a full-width fixed strip, so
+// most of what reads as "blank space" around the caption is actually inside it.
 ui.lightbox.addEventListener("click", (event) => {
-  if (event.target === ui.lightbox) closeViewer();
+  if (suppressNextLightboxClick) {
+    suppressNextLightboxClick = false;
+    return;
+  }
+  if (!(event.target instanceof Element)) return;
+  if (event.target.closest("img, button, a")) return;
+  closeViewer();
+});
+
+// ---------------------------------------------------------------------------
+// Lightbox swipe
+//
+// Pointer Events rather than separate touch/mouse listeners, since they unify
+// touch, pen and mouse. Tracked on the image only, so a drag starting on the
+// nav buttons or the bottom bar can't be misread as a swipe.
+// ---------------------------------------------------------------------------
+
+const SWIPE_THRESHOLD = 50;
+let swipeStart: { x: number; y: number } | undefined;
+/** A swipe's pointerup can synthesize a click; that click must not also close the viewer. */
+let suppressNextLightboxClick = false;
+
+ui.lbImg.addEventListener("pointerdown", (event) => {
+  swipeStart = { x: event.clientX, y: event.clientY };
+});
+
+ui.lbImg.addEventListener("pointerup", (event) => {
+  if (!swipeStart) return;
+  const dx = event.clientX - swipeStart.x;
+  const dy = event.clientY - swipeStart.y;
+  swipeStart = undefined;
+  if (Math.abs(dx) < SWIPE_THRESHOLD || Math.abs(dx) <= Math.abs(dy)) return;
+  suppressNextLightboxClick = true;
+  stepViewer(dx > 0 ? -1 : 1);
+});
+
+ui.lbImg.addEventListener("pointercancel", () => {
+  swipeStart = undefined;
 });
 
 ui.lightbox.addEventListener("keydown", (event) => {
@@ -854,6 +1014,17 @@ ui.results.addEventListener("click", (event) => {
     openViewer(zoom.dataset.zoom ?? "", Number(zoom.dataset.index ?? 0));
     return;
   }
+  const handle = node.closest<HTMLAnchorElement>("a[data-dig-author]");
+  if (handle) {
+    event.preventDefault();
+    const did = handle.dataset.digAuthor;
+    const digHandle = handle.dataset.digHandle;
+    if (did && digHandle) {
+      setDigFilter({ did, handle: digHandle });
+      void dig();
+    }
+    return;
+  }
   const play = node.closest<HTMLButtonElement>("button.play");
   if (play) {
     void playVideo(play);
@@ -873,6 +1044,11 @@ ui.results.addEventListener("click", (event) => {
   }
   const act = node.closest<HTMLButtonElement>("button.act");
   if (act) void applyAction(act);
+});
+
+ui.clearDigFilter.addEventListener("click", () => {
+  setDigFilter(undefined);
+  void dig();
 });
 
 // ---------------------------------------------------------------------------
@@ -895,6 +1071,21 @@ function reflectAccount(): void {
     ui.signin.hidden = false;
     ui.who.hidden = true;
     ui.whoHandle.textContent = "";
+  }
+}
+
+/**
+ * Backfills exclusions for bookmarks made before Altostrata could track them,
+ * or from another client. Safe to call on every sign-in: insertExclusions
+ * dedupes on (uri, reason), so nothing double-inserts on a later call.
+ */
+async function syncBookmarks(): Promise<void> {
+  try {
+    const bookmarks = await listBookmarks();
+    if (bookmarks.length === 0) return;
+    await insertExclusions(bookmarks.map((b) => ({ uri: b.uri, reason: "bookmark" })));
+  } catch (err) {
+    console.warn("Could not sync bookmarks", err);
   }
 }
 
@@ -924,6 +1115,7 @@ ui.authForm.addEventListener("submit", async (event) => {
     await signIn(input);
     ui.auth.close();
     reflectAccount();
+    await syncBookmarks();
     // Re-hydrate so the buttons reflect real viewer state rather than blanks.
     await dig("<strong>Signed in.</strong> Likes, reposts and bookmarks are live.");
   } catch (err) {
@@ -1087,6 +1279,7 @@ async function startFresh(handle: string): Promise<void> {
     );
     if (!ok) return;
     await resetAll();
+    setDigFilter(undefined);
   }
   await runCrawl(normalised, { deep: true });
 }
@@ -1160,6 +1353,7 @@ ui.resetAll.addEventListener("click", async () => {
   const ok = window.confirm("Erase the whole local index? This cannot be undone.");
   if (!ok) return;
   await resetAll();
+  setDigFilter(undefined);
   ui.settings.close();
   ui.results.innerHTML = "";
   ui.note.textContent = "";
@@ -1239,8 +1433,10 @@ ui.file.addEventListener("change", async () => {
 
 function showSetup(): void {
   ui.setup.hidden = false;
-  ui.controls.hidden = true;
+  ui.controlsRow1.hidden = true;
+  ui.controlsRow2.hidden = true;
   ui.tagline.hidden = false;
+  ui.digBottom.hidden = true;
 }
 
 /**
@@ -1249,14 +1445,35 @@ function showSetup(): void {
  */
 function showBrowsing(): void {
   ui.setup.hidden = true;
-  ui.controls.hidden = false;
+  ui.controlsRow1.hidden = false;
+  ui.controlsRow2.hidden = false;
   ui.tagline.hidden = true;
+  ui.digBottom.hidden = false;
 }
 
 ui.dig.addEventListener("click", () => void dig());
+ui.digBottom.addEventListener("click", () => void dig());
 ui.age.addEventListener("change", () => void dig());
 ui.liked.addEventListener("change", () => void dig());
 ui.toTop.addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
+
+/**
+ * On mobile, `#pinned-row` is `position: fixed` (see the 700px query) so it can
+ * stay put while `.controls-row-2` scrolls away underneath it — but a fixed
+ * element reserves no space of its own, so `header` needs an explicit
+ * padding-top standing in for it. That height isn't constant: it grows by a
+ * line whenever the "Digging @handle" chip wraps `.controls-row-1` onto two
+ * rows. Mirroring the live height into a CSS variable, rather than hard-coding
+ * one, keeps the reserved space correct in both states without duplicating the
+ * chip's wrapping logic in CSS.
+ */
+new ResizeObserver(([entry]) => {
+  if (!entry) return;
+  document.documentElement.style.setProperty(
+    "--pinned-row-height",
+    `${entry.borderBoxSize[0]?.blockSize ?? entry.contentRect.height}px`,
+  );
+}).observe(ui.pinnedRow);
 
 async function boot(): Promise<void> {
   void requestPersistence();
@@ -1265,6 +1482,8 @@ async function boot(): Promise<void> {
   // redirect callback has to be consumed out of the URL early.
   await initAuth();
   reflectAccount();
+  // Fire-and-forget: a restored session shouldn't delay the first dig on this.
+  if (isSignedIn()) void syncBookmarks();
 
   let s: Stats;
   try {

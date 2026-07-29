@@ -195,6 +195,19 @@ h1 { margin: 0; line-height: 1; }
   margin-left: auto;
 }
 
+/* Wrappers that split the header into a permanently-pinned piece (`.pinned-row`:
+   wordmark + Dig) and one that scrolls away on mobile (`.controls-row-2`: age,
+   toggles, account chrome) — see the 700px query below. On wider viewports both
+   disappear from the box tree entirely, so their children join `.bar`'s own
+   flex row exactly as one line, same as before this split existed. */
+.pinned-row,
+.controls-row {
+  display: contents;
+}
+
+.icon-btn { display: inline-flex; align-items: center; gap: 6px; }
+.icon-btn .icon { width: 14px; height: 14px; flex: none; }
+
 label.field {
   display: flex;
   align-items: center;
@@ -203,6 +216,11 @@ label.field {
   color: var(--dim);
   white-space: nowrap;
 }
+
+/* Toggle labels carry both a full and an abbreviated wording; only one shows
+   at a time (see the 700px query), so there is no separate mobile markup to
+   keep in sync. */
+.short { display: none; }
 
 /* Stacked rather than side by side: two rows of checkbox fit inside the height
    the bar already has, and the column is narrower than the two laid out in a
@@ -260,6 +278,16 @@ button.dig {
 button.dig:hover:not(:disabled) { filter: brightness(1.1); }
 button.dig:active:not(:disabled) { transform: translateY(1px); }
 
+/* In the page flow, not floating: the header's Dig button is already
+   `position: sticky` and never leaves the screen, so a second always-visible
+   copy just duplicated it. This one only appears where it's actually useful —
+   at the point the reader stopped scrolling. */
+button.dig.dig-end {
+  display: flex;
+  margin: 8px auto 0;
+  padding: 13px 32px;
+}
+
 button.ghost {
   font-family: var(--mono);
   font-size: 11px;
@@ -273,6 +301,25 @@ button.ghost:hover:not(:disabled) {
   color: var(--text);
   border-color: var(--faint);
   background: var(--panel);
+}
+
+.digging-as {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+.digging-as strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.digging-as button.ghost {
+  padding: 4px 10px;
+  font-size: 10px;
 }
 
 :focus-visible {
@@ -331,7 +378,7 @@ button.ghost:hover:not(:disabled) {
 main {
   max-width: 860px;
   margin: 0 auto;
-  padding: 40px 24px 120px;
+  padding: 40px 24px 56px;
 }
 
 .note {
@@ -340,6 +387,11 @@ main {
   padding: 40px 0;
   max-width: 52ch;
 }
+
+/* `dig()` clears this on every successful dig and only fills it in for a
+   message — most digs leave it empty, and the padding above still reserved a
+   full 80px of dead space even with nothing in it. */
+.note:empty { padding: 0; }
 
 .note strong { color: var(--text); font-weight: 500; }
 .note code {
@@ -400,7 +452,7 @@ main {
   border-bottom: 1px solid var(--line);
 }
 
-.find:last-child { border-bottom: none; }
+.find:last-child { border-bottom: none; margin-bottom: 0; }
 
 /* Depth gauge: oldest indexed post at the bottom, newest at the top. */
 .gauge {
@@ -409,20 +461,37 @@ main {
   margin-left: 8px;
 }
 
-/* Quarter marks, so the dot's height reads as a fraction of the account's
-   indexed history rather than just "somewhere on a line". */
-.gauge::before {
+/* Marks at real month/year boundaries (`gaugeNotches`), so the dot's height reads
+   against actual dates rather than just "somewhere on a line". The rail itself is
+   the `.gauge` element's own border-left. */
+.gauge .notch-year {
+  position: absolute;
+  left: 6px;
+  transform: translateY(-50%);
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.gauge .notch-year::before {
   content: "";
   position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
+  left: -10px;
+  top: 50%;
+  width: 8px;
+  height: 1px;
+  background: var(--faint);
+}
+
+.gauge .notch-month {
+  position: absolute;
+  left: -2px;
   width: 4px;
-  background: repeating-linear-gradient(
-    to bottom,
-    var(--line) 0 1px,
-    transparent 1px 25%
-  );
+  height: 1px;
+  background: var(--line);
+  opacity: 0.8;
+  transform: translateY(-50%);
 }
 
 .gauge .tick {
@@ -687,6 +756,16 @@ figure:hover .grab, .grab:focus-visible { opacity: 1; }
 
 .act.open:hover { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 55%, transparent); }
 
+/* Icons stay visible while signed out — muted rather than hidden, since the
+   click still opens the sign-in dialog. The per-kind hover colours would
+   otherwise suggest the tap will like/repost/save immediately. */
+.act[data-signed-out="1"] { opacity: 0.45; }
+.act[data-signed-out="1"]:hover:not(:disabled) {
+  background: var(--panel);
+  color: var(--dim);
+  border-color: var(--line);
+}
+
 /* ---------- account ---------- */
 
 .who {
@@ -874,8 +953,66 @@ dialog input[type="text"] { background: var(--ink); }
   .find { grid-template-columns: 1fr; gap: 0; }
   .gauge { display: none; }
   .age { font-size: 25px; margin-top: 0; }
-  .bar { flex-wrap: wrap; }
   .progress .label { max-width: 24ch; }
+
+  /* The header itself stops being the sticky element. `.pinned-row` (wordmark
+     + Dig + the author filter chip) is fixed to the viewport on its own, so it
+     stays put permanently; `.controls-row-2` (age, toggles, account chrome) is
+     no longer inside anything sticky/fixed, so it scrolls away like ordinary
+     page content. `header`'s own padding-top reserves exactly as much space as
+     `.pinned-row` actually renders at — kept in sync by a ResizeObserver in
+     app.ts, since that height changes when the filter chip wraps it to two
+     lines — so nothing ever renders underneath the fixed bar. */
+  header {
+    position: static;
+    background: none;
+    backdrop-filter: none;
+    border-bottom: none;
+    padding-top: var(--pinned-row-height, 60px);
+  }
+  .bar { flex-wrap: wrap; padding: 0; gap: 0; }
+
+  .pinned-row {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 15;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 12px 16px;
+    background: color-mix(in srgb, var(--ink) 88%, transparent);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .controls-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+  .controls-row-1 { gap: 10px; }
+  .controls-row-2 {
+    flex-basis: 100%;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: nowrap;
+    padding: 10px 16px 12px;
+  }
+  .toggles { flex-direction: row; gap: 8px; flex: none; }
+  .toggles label.field { font-size: 11px; gap: 4px; }
+  .secondary { margin-left: 0; gap: 6px; flex: none; }
+
+  /* Abbreviated wording and a bare select, so line 2 (age + toggles + account
+     chrome) fits without wrapping a second time inside itself. */
+  .field-label { display: none; }
+  .full { display: none; }
+  .short { display: inline; }
+  #age { padding: 6px 8px; }
+
+  /* Text labels give way to icons: "Index"/"Sign in"/"Sign out" spelled out
+     took more width than a compacted row has to spare. */
+  .icon-btn .label { display: none; }
+  .icon-btn { padding: 8px; }
+  .icon-btn .icon { width: 16px; height: 16px; }
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -898,12 +1035,22 @@ dialog input[type="text"] { background: var(--ink); }
 
 <header>
   <div class="bar">
-    <h1><button class="wordmark" id="to-top" title="Back to top"><svg class="mark" viewBox="0 0 63.5 52" aria-hidden="true"><rect x="0" y="0" width="62" height="7" rx="3.5" fill="#f7f7f8" opacity=".95"/><rect x="0" y="15" width="48" height="7" rx="3.5" fill="#f7f7f8" opacity=".58"/><rect x="0" y="30" width="62" height="7" rx="3.5" fill="#f7f7f8" opacity=".34"/><rect x="0" y="45" width="40" height="7" rx="3.5" fill="#f7f7f8" opacity=".2"/><circle cx="55" cy="33.5" r="8.5" fill="#ffb224"/></svg><span class="word">Altostrata<span>.</span></span></button></h1>
-    <div class="tagline" id="tagline">Media posts from your follows, dug up at random</div>
-    <div class="controls" id="controls" hidden>
-      <button class="dig" id="dig">Dig</button>
-      <label class="field">
-        Older than
+    <!-- Stays pinned on its own on mobile (see the 700px query) — `.controls-row-2`
+         sits outside it specifically so it can scroll away independently. -->
+    <div class="pinned-row" id="pinned-row">
+      <h1><button class="wordmark" id="to-top" title="Back to top"><svg class="mark" viewBox="0 0 63.5 52" aria-hidden="true"><rect x="0" y="0" width="62" height="7" rx="3.5" fill="#f7f7f8" opacity=".95"/><rect x="0" y="15" width="48" height="7" rx="3.5" fill="#f7f7f8" opacity=".58"/><rect x="0" y="30" width="62" height="7" rx="3.5" fill="#f7f7f8" opacity=".34"/><rect x="0" y="45" width="40" height="7" rx="3.5" fill="#f7f7f8" opacity=".2"/><circle cx="55" cy="33.5" r="8.5" fill="#ffb224"/></svg><span class="word">Altostrata<span>.</span></span></button></h1>
+      <div class="tagline" id="tagline">Media posts from your follows, dug up at random</div>
+      <div class="controls-row controls-row-1" id="controls-row-1" hidden>
+        <button class="dig" id="dig">Dig</button>
+        <span class="digging-as" id="digging-as" hidden>
+          Digging <strong id="digging-handle"></strong>
+          <button class="ghost" id="clear-dig-filter" title="Stop digging just this account">Clear</button>
+        </span>
+      </div>
+    </div>
+    <div class="controls-row controls-row-2" id="controls-row-2" hidden>
+      <label class="field" title="Older than">
+        <span class="field-label">Older than</span>
         <select id="age">
           <option value="0">now</option>
           <option value="30">1 month</option>
@@ -914,18 +1061,36 @@ dialog input[type="text"] { background: var(--ink); }
       </label>
       <div class="toggles">
         <label class="field" title="Include posts that have already been surfaced">
-          <input type="checkbox" id="seen"> Allow repeats
+          <input type="checkbox" id="seen">
+          <span class="full">Allow repeats</span><span class="short">Repeats</span>
         </label>
         <label class="field" title="Include posts you have liked. Reposts stay hidden.">
-          <input type="checkbox" id="liked"> Include liked
+          <input type="checkbox" id="liked">
+          <span class="full">Include liked</span><span class="short">Liked</span>
         </label>
       </div>
       <div class="secondary">
-        <button class="ghost" id="open-settings" aria-haspopup="dialog">Index</button>
-        <button class="ghost" id="signin" aria-haspopup="dialog">Sign in</button>
+        <button class="ghost icon-btn" id="open-settings" aria-haspopup="dialog" title="Index">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+          <span class="label">Index</span>
+        </button>
+        <button class="ghost icon-btn" id="signin" aria-haspopup="dialog" title="Sign in">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/>
+          </svg>
+          <span class="label">Sign in</span>
+        </button>
         <span class="who" id="who" hidden>
           <span id="who-handle"></span>
-          <button class="ghost" id="signout" title="Sign out">Sign out</button>
+          <button class="ghost icon-btn" id="signout" title="Sign out">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/>
+            </svg>
+            <span class="label">Sign out</span>
+          </button>
         </span>
       </div>
     </div>
@@ -962,6 +1127,7 @@ dialog input[type="text"] { background: var(--ink); }
 
   <div id="results"></div>
   <div class="note" id="note"></div>
+  <button class="dig dig-end" id="dig-bottom" hidden title="Dig">Dig</button>
 </main>
 
 <dialog id="settings">
