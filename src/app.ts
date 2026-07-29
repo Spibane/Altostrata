@@ -1,4 +1,4 @@
-import { AbortedError, fetchBlob, getPosts, type PostView } from "./atproto.ts";
+import { AbortedError, fetchBlob, getPosts, resolveHandle, type PostView } from "./atproto.ts";
 import { escapeHtml, renderRichText } from "./richtext.ts";
 import { crawl, type CrawlProgress } from "./crawl.ts";
 import {
@@ -283,8 +283,11 @@ function depthOf(row: ShuffleRow): number | null {
 }
 
 function toCard(post: PostView, row: ShuffleRow): Card {
-  const { images, isVideo } = extractImages(post.embed);
-  const refs = originalRefs(post);
+  // Refs are zipped into the images by record position, so each image carries
+  // its own. `targets.refs` is then rebuilt from the *rendered* images, keeping
+  // DOM indices and blob refs aligned even when an entry was unusable.
+  const { images, isVideo } = extractImages(post.embed, originalRefs(post));
+  const refs = images.map((image) => image.original);
   const handle = post.author.handle;
 
   targets.set(post.uri, { uri: post.uri, authorDid: post.author.did, handle, refs });
@@ -314,7 +317,7 @@ function toCard(post: PostView, row: ShuffleRow): Card {
     depth: depthOf(row),
     authorOldest: row.authorOldest,
     authorNewest: row.authorNewest,
-    originals: refs.length,
+    originals: refs.filter((ref) => ref !== null).length,
   };
 }
 
@@ -368,7 +371,10 @@ function gaugeNotches(oldestIso: string, newestIso: string): Notch[] {
 function gaugeHtml(card: Card): string {
   if (card.depth === null) return '<div class="gauge"></div>';
   const fromTop = (1 - card.depth) * 100;
-  const oldestYear = card.authorOldest ? new Date(card.authorOldest).getFullYear() : "";
+  // UTC, to match the notch boundaries below. Reading this one in local time put
+  // the cap a year off from the notch sitting on top of it for anyone west of
+  // Greenwich whose oldest post landed in the first hours of January.
+  const oldestYear = card.authorOldest ? new Date(card.authorOldest).getUTCFullYear() : "";
   const notches =
     card.authorOldest && card.authorNewest
       ? gaugeNotches(card.authorOldest, card.authorNewest)
@@ -394,8 +400,10 @@ function mediaHtml(card: Card): string {
 
   const items = shown
     .map((image, i) => {
+      // Keyed off this image's own ref rather than `i < card.originals`, which
+      // assumed every downloadable original sat in an unbroken prefix.
       const grab =
-        i < card.originals
+        image.original !== null
           ? `<button class="grab" data-uri="${escapeHtml(card.uri)}" data-index="${i}"
              title="Download the original file">${ICONS.download}<span class="label">${
                card.isVideo ? "Video" : "Original"
@@ -576,7 +584,7 @@ async function dig(afterMessage?: string): Promise<void> {
     if (superseded()) return;
 
     if (rows.length === 0) {
-      await showEmptyNote();
+      await showEmptyNote(superseded);
       return;
     }
 
@@ -601,20 +609,38 @@ async function dig(afterMessage?: string): Promise<void> {
     videos.clear();
     galleries.clear();
     releaseObjectUrls();
-    const cards = hydrated.flatMap((post) => {
+    const cards: Card[] = [];
+    // Hydrated but unrenderable — the AppView still knows the post, so it is not
+    // "missing" and never gets deleted, but nothing can be drawn for it either.
+    // Marking these seen alongside the rendered ones stops each from silently
+    // consuming a slot in every future page forever.
+    const unrenderable: string[] = [];
+    for (const post of hydrated) {
       const row = byUri.get(post.uri);
-      if (!row) return [];
+      if (!row) continue;
       const card = toCard(post, row);
-      return card.images.length > 0 ? [card] : [];
-    });
+      if (card.images.length > 0) cards.push(card);
+      else unrenderable.push(post.uri);
+    }
 
     if (cards.length === 0) {
-      await showEmptyNote();
+      if (unrenderable.length > 0) {
+        markShown(unrenderable).catch((err: unknown) => {
+          console.warn("Could not record seen state", err);
+        });
+      }
+      await showEmptyNote(superseded);
       return;
     }
 
     ui.results.innerHTML = cards.map(cardHtml).join("");
-    await markShown(cards.map((card) => card.uri));
+    // Not awaited into the catch below: the cards are already on screen, so a
+    // failure here (a full quota, say) is a seen-state problem, not a load
+    // failure, and painting "Could not load posts" over a rendered page would
+    // be actively wrong.
+    markShown([...cards.map((card) => card.uri), ...unrenderable]).catch((err: unknown) => {
+      console.warn("Could not record seen state", err);
+    });
     if (afterMessage) ui.note.innerHTML = afterMessage;
     scrollToTop();
   } catch (err) {
@@ -633,8 +659,17 @@ async function dig(afterMessage?: string): Promise<void> {
   }
 }
 
-async function showEmptyNote(): Promise<void> {
+/**
+ * `superseded` is threaded in rather than checked against `digGeneration`
+ * directly so this shares one notion of staleness with its caller. Without it,
+ * a slow dig that found nothing could resume after `await stats()` and wipe a
+ * *newer* dig's rendered cards — replacing real results with "nothing left to
+ * surface", and revoking the object URL of a video the newer page had started
+ * playing.
+ */
+async function showEmptyNote(superseded: () => boolean): Promise<void> {
   const s = await stats();
+  if (superseded()) return;
   // Cards are going away, so their state and any object URLs go with them.
   targets.clear();
   actions.clear();
@@ -883,9 +918,9 @@ function renderViewer(): void {
   ui.lbPrev.hidden = total < 2;
   ui.lbNext.hidden = total < 2;
 
-  // Only offer the download when this image actually has an original on record.
-  const refs = targets.get(viewing.uri)?.refs.length ?? 0;
-  ui.lbDownload.hidden = viewing.index >= refs;
+  // Only offer the download when *this* image has an original on record — an
+  // index comparison assumed the downloadable ones formed an unbroken prefix.
+  ui.lbDownload.hidden = !targets.get(viewing.uri)?.refs[viewing.index];
 }
 
 function openViewer(uri: string, index: number): void {
@@ -952,6 +987,23 @@ let suppressNextLightboxClick = false;
 
 ui.lbImg.addEventListener("pointerdown", (event) => {
   swipeStart = { x: event.clientX, y: event.clientY };
+  // Cleared here as well as in the click handler: a touch swipe exceeds the tap
+  // slop, so the browser synthesizes no click at all and the flag would
+  // otherwise stay set and eat the *next* legitimate tap-to-close — including
+  // one in a later viewer session entirely.
+  suppressNextLightboxClick = false;
+  // Routes every later event for this pointer here even once it leaves the
+  // image's box, which a fast flick or a portrait image on a wide screen does
+  // easily. Without it the pointerup lands on the bar or backdrop instead, so
+  // the swipe silently does nothing and its click closes the viewer.
+  if (event.pointerId !== undefined) {
+    try {
+      ui.lbImg.setPointerCapture(event.pointerId);
+    } catch {
+      // A pointer that has already ended cannot be captured; the swipe just
+      // falls back to the uncaptured path.
+    }
+  }
 });
 
 ui.lbImg.addEventListener("pointerup", (event) => {
@@ -983,6 +1035,8 @@ ui.lightbox.addEventListener("keydown", (event) => {
 ui.lightbox.addEventListener("close", () => {
   viewing = undefined;
   ui.lbImg.removeAttribute("src");
+  swipeStart = undefined;
+  suppressNextLightboxClick = false;
 });
 
 ui.lbDownload.addEventListener("click", async () => {
@@ -1205,7 +1259,13 @@ async function runCrawl(handle: string, options: { deep: boolean }): Promise<voi
       onProgress: showProgress,
       onFirstPosts,
     });
-    if (shallow.stopped) return;
+    // Stopping used to leave the strip on screen forever: the click handler hid
+    // it, then the aborting crawl's own "Stopped" progress report showed it
+    // again, and returning here skipped every later `hideProgress`.
+    if (shallow.stopped) {
+      hideProgress();
+      return;
+    }
 
     onFirstPosts();
     await refreshStats();
@@ -1218,7 +1278,10 @@ async function runCrawl(handle: string, options: { deep: boolean }): Promise<voi
         onProgress: showProgress,
         onFirstPosts,
       });
-      if (deep.stopped) return;
+      if (deep.stopped) {
+        hideProgress();
+        return;
+      }
     }
 
     showProgress({
@@ -1247,7 +1310,10 @@ async function runCrawl(handle: string, options: { deep: boolean }): Promise<voi
       ui.setupError.textContent = message;
       hideProgress();
     }
-    throw err;
+    // Deliberately not rethrown. The failure is already reported above, and none
+    // of the three callers (`startFresh`, Dig deeper, Check for new posts) catch
+    // — so rethrowing only produced an unhandledrejection alongside the message,
+    // including on the quota path this block goes out of its way to explain.
   } finally {
     window.removeEventListener("beforeunload", warnBeforeLeaving);
     crawlController = undefined;
@@ -1283,8 +1349,27 @@ async function startFresh(handle: string): Promise<void> {
   const owner = await getMeta("owner_handle");
   const normalised = handle.replace(/^@/, "").toLowerCase();
   if (owner && owner !== normalised) {
+    // Resolve first, wipe second. The other order erased a finished index —
+    // twelve minutes of crawling — before discovering the new handle was a typo
+    // or a deleted account, since resolution did not happen until inside the
+    // crawl. The confirm below is the point of no return, so nothing that can
+    // fail on bad input may come after it.
+    ui.setupError.hidden = true;
+    try {
+      await resolveHandle(normalised);
+    } catch (err) {
+      ui.setupError.hidden = false;
+      ui.setupError.textContent = `Could not find @${normalised}. Your existing index is untouched.`;
+      console.warn("Handle resolution failed", err);
+      return;
+    }
+
+    const s = await stats();
     const ok = window.confirm(
-      `This browser holds an index for @${owner}. Building one for @${normalised} will erase it. Continue?`,
+      `This browser holds an index for @${owner}: ${s.posts.toLocaleString()} posts across ` +
+        `${s.authors.toLocaleString()} accounts.\n\n` +
+        `Building one for @${normalised} will erase it, and rebuilding takes many minutes. ` +
+        `Export it first from the Index panel if you want to keep it.\n\nErase and rebuild?`,
     );
     if (!ok) return;
     await resetAll();
@@ -1305,8 +1390,9 @@ async function refreshStats(): Promise<void> {
     ["Accounts followed", s.authors.toLocaleString()],
     ["Fully indexed", `${s.authorsComplete.toLocaleString()} of ${s.authors.toLocaleString()}`],
     ["Media posts", s.posts.toLocaleString()],
-    // The raw count of exclusion records, not how many indexed posts they hide.
-    ["Likes and reposts", s.excluded.toLocaleString()],
+    // Distinct posts excluded, not a count of exclusion records — one post can
+    // now carry several reasons at once, so those two numbers differ.
+    ["Excluded posts", s.excluded.toLocaleString()],
     ["Already surfaced", s.seen.toLocaleString()],
     ["Still unseen", s.unseen.toLocaleString()],
     ["Oldest post", s.oldest ? s.oldest.slice(0, 10) : "none yet", true],
@@ -1464,6 +1550,9 @@ ui.dig.addEventListener("click", () => void dig());
 ui.digBottom.addEventListener("click", () => void dig());
 ui.age.addEventListener("change", () => void dig());
 ui.liked.addEventListener("change", () => void dig());
+// "Allow repeats" sat here with no listener while its two neighbours in the same
+// cluster re-dug instantly, so it read as a broken checkbox.
+ui.seen.addEventListener("change", () => void dig());
 ui.toTop.addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
 
 /**

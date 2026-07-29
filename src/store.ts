@@ -45,10 +45,33 @@ let dbPromise: Promise<IDBDatabase> | undefined;
 
 function openDb(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise;
-  dbPromise = new Promise((resolve, reject) => {
+  const attempt = new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onerror = () => reject(request.error ?? new Error("Could not open IndexedDB"));
-    request.onsuccess = () => resolve(request.result);
+    /**
+     * A blocked open never fires `success` *or* `error` — it simply hangs. Without
+     * this the whole app waits on a promise that can never settle, and because
+     * every section starts out `hidden`, the page renders as a bare header with
+     * no error and no way to tell why. Blocking happens whenever another tab
+     * still holds a connection at the older version, i.e. on every schema bump.
+     */
+    request.onblocked = () =>
+      reject(
+        new Error(
+          "Another tab has an older version of Altostrata open. Close or reload it, then reload this page.",
+        ),
+      );
+    request.onsuccess = () => {
+      const db = request.result;
+      // The other half of the same problem: when *this* tab is the old one, it
+      // has to step aside so the new tab's upgrade can start, rather than
+      // blocking it forever.
+      db.onversionchange = () => {
+        db.close();
+        dbPromise = undefined;
+      };
+      resolve(db);
+    };
     request.onupgradeneeded = (event) => {
       const db = request.result;
 
@@ -81,6 +104,11 @@ function openDb(): Promise<IDBDatabase> {
           if (!transaction) throw new Error("Missing upgrade transaction");
           const oldStore = transaction.objectStore("excluded");
           const getAllRequest = oldStore.getAll();
+          // Without this the read failing would leave the version at 2 while the
+          // store kept its v1 keyPath and gained no `by_uri` index — every later
+          // unlike would throw and multi-reason rows would silently collapse.
+          // Aborting instead rolls the whole upgrade back to v1, data intact.
+          getAllRequest.onerror = () => transaction.abort();
           getAllRequest.onsuccess = () => {
             const rows = getAllRequest.result as Array<{ uri: string; reason: string }>;
             db.deleteObjectStore("excluded");
@@ -95,6 +123,13 @@ function openDb(): Promise<IDBDatabase> {
       }
     };
   });
+  // Deliberately not caching a rejection: a blocked open resolves itself the
+  // moment the other tab goes away, so a caller that retries should get a fresh
+  // attempt rather than the first failure forever.
+  attempt.catch(() => {
+    dbPromise = undefined;
+  });
+  dbPromise = attempt;
   return dbPromise;
 }
 
@@ -152,6 +187,29 @@ function pairKey(uri: string, reason: string): string {
   return `${uri} ${reason}`;
 }
 
+/**
+ * Memoises the *promise*, not just the result. Two concurrent first-callers
+ * would otherwise each build their own Set objects and each assign the
+ * module-level vars — the loser then holds references the module no longer
+ * uses, so an exclusion it inserts is written to the database but invisible to
+ * `shuffle` until reload. `boot()` fires `syncBookmarks()` alongside `stats()`
+ * and the first `dig()`, which is exactly that shape.
+ */
+let setsPromise: Promise<Sets> | undefined;
+
+/**
+ * Bumped by every wipe (`resetAll`, `clearExclusions`, `resetSeen`, `importIndex`).
+ * A read that started before a wipe must not assign its now-stale Sets over the
+ * empty ones the wipe installed — clearing `setsPromise` alone cannot stop an
+ * already-running read from finishing.
+ */
+let setsEpoch = 0;
+
+function invalidateSets(): void {
+  setsEpoch += 1;
+  setsPromise = undefined;
+}
+
 async function loadSets(): Promise<Sets> {
   if (excludedSet && excludedPairSet && likedSet && nonWaivableSet && seenSet) {
     return {
@@ -162,6 +220,14 @@ async function loadSets(): Promise<Sets> {
       seen: seenSet,
     };
   }
+  setsPromise ??= readSets().finally(() => {
+    setsPromise = undefined;
+  });
+  return setsPromise;
+}
+
+async function readSets(): Promise<Sets> {
+  const epoch = setsEpoch;
   const db = await openDb();
   const { transaction } = tx(db, ["excluded", "seen"], "readonly");
   const [excluded, seenKeys] = await Promise.all([
@@ -170,18 +236,23 @@ async function loadSets(): Promise<Sets> {
     >,
     wrap(transaction.objectStore("seen").getAllKeys()),
   ]);
-  excludedSet = new Set(excluded.map((row) => row.uri));
-  excludedPairSet = new Set(excluded.map((row) => pairKey(row.uri, row.reason)));
-  likedSet = new Set(excluded.filter((row) => row.reason === "like").map((row) => row.uri));
-  nonWaivableSet = new Set(excluded.filter((row) => row.reason !== "like").map((row) => row.uri));
-  seenSet = new Set(seenKeys as string[]);
-  return {
-    excluded: excludedSet,
-    pairs: excludedPairSet,
-    liked: likedSet,
-    nonWaivable: nonWaivableSet,
-    seen: seenSet,
+  const sets: Sets = {
+    excluded: new Set(excluded.map((row) => row.uri)),
+    pairs: new Set(excluded.map((row) => pairKey(row.uri, row.reason))),
+    liked: new Set(excluded.filter((row) => row.reason === "like").map((row) => row.uri)),
+    nonWaivable: new Set(excluded.filter((row) => row.reason !== "like").map((row) => row.uri)),
+    seen: new Set(seenKeys as string[]),
   };
+  // A wipe landed while this read was in flight, so its result describes a
+  // database state that no longer exists. Hand it back to this caller but leave
+  // the module's Sets — which the wipe just emptied — alone.
+  if (epoch !== setsEpoch) return sets;
+  excludedSet = sets.excluded;
+  excludedPairSet = sets.pairs;
+  likedSet = sets.liked;
+  nonWaivableSet = sets.nonWaivable;
+  seenSet = sets.seen;
+  return sets;
 }
 
 // ---------------------------------------------------------------------------
@@ -325,11 +396,20 @@ export async function insertPosts(rows: PostInsert[]): Promise<number> {
 
 export async function deletePosts(uris: string[]): Promise<void> {
   if (uris.length === 0) return;
+  const { seen } = await loadSets();
   const db = await openDb();
-  const { transaction, done } = tx(db, ["posts"], "readwrite");
+  // Seen rows go with the posts. Leaving them behind inflated `seen` against a
+  // shrinking `posts`, so the "still unseen" figure drifted further from the
+  // truth every time a deleted post was cleaned up.
+  const { transaction, done } = tx(db, ["posts", "seen"], "readwrite");
   const store = transaction.objectStore("posts");
-  for (const uri of uris) store.delete(uri);
+  const seenStore = transaction.objectStore("seen");
+  for (const uri of uris) {
+    store.delete(uri);
+    seenStore.delete(uri);
+  }
   await done;
+  for (const uri of uris) seen.delete(uri);
 }
 
 // ---------------------------------------------------------------------------
@@ -370,6 +450,10 @@ export async function removeExclusion(uri: string, reason: string): Promise<void
   const remainingRequest = wrap(store.index("by_uri").getAll(uri)) as Promise<
     Array<{ uri: string; reason: string }>
   >;
+  // Both requests are issued before this await, so the transaction stays active
+  // for both. Attaching a catch keeps a failed transaction from surfacing as an
+  // unhandled rejection on this promise, which `await done` would beat to it.
+  remainingRequest.catch(() => {});
   await done;
   const remaining = await remainingRequest;
 
@@ -393,6 +477,7 @@ export async function clearExclusions(): Promise<void> {
   excludedPairSet = new Set();
   likedSet = new Set();
   nonWaivableSet = new Set();
+  invalidateSets();
 }
 
 // ---------------------------------------------------------------------------
@@ -422,6 +507,7 @@ export async function resetSeen(): Promise<number> {
   transaction.objectStore("seen").clear();
   await done;
   seenSet = new Set();
+  invalidateSets();
   return count;
 }
 
@@ -572,16 +658,22 @@ export async function shuffleByAuthor(
   const db = await openDb();
 
   const matches: PostRow[] = [];
+  // Bounds rows *scanned*, not rows kept, matching `shuffle`. Counting only
+  // matches meant that an author whose posts were all filtered out — the normal
+  // end state, once everything has been seen — walked their entire history on
+  // every dig without the cap ever coming close.
+  let scanned = 0;
   await new Promise<void>((resolve, reject) => {
     const index = tx(db, ["posts"], "readonly").transaction.objectStore("posts").index("by_author");
     const cursorRequest = index.openCursor(IDBKeyRange.only(authorDid));
     cursorRequest.onerror = () => reject(cursorRequest.error);
     cursorRequest.onsuccess = () => {
       const cursor = cursorRequest.result;
-      if (!cursor || matches.length >= SCAN_LIMIT) {
+      if (!cursor || scanned >= SCAN_LIMIT) {
         resolve();
         return;
       }
+      scanned += 1;
       const row = cursor.value as PostRow;
       const blocked = isBlocked(row.uri, options.includeLiked, excluded, liked, nonWaivable);
       const ok = row.createdAt < cutoff && !blocked && (options.includeSeen || !seen.has(row.uri));
@@ -649,6 +741,7 @@ export async function resetAll(): Promise<void> {
   likedSet = new Set();
   nonWaivableSet = new Set();
   seenSet = new Set();
+  invalidateSets();
 }
 
 /** Best-effort request that the browser stop evicting this index. */
@@ -862,12 +955,14 @@ export async function importIndex(
   }
 
   // All five, so a future change to loadSets that refreshes them independently
-  // cannot leave a stale subset behind.
+  // cannot leave a stale subset behind. `setsPromise` too, or an in-flight read
+  // started before the import would resolve into the post-import world.
   excludedSet = undefined;
   excludedPairSet = undefined;
   likedSet = undefined;
   nonWaivableSet = undefined;
   seenSet = undefined;
+  invalidateSets();
 
   // Optional: an export from an older build, or a hand-trimmed one, may omit these.
   if (file.owner?.did) await setMeta("owner_did", String(file.owner.did));

@@ -248,7 +248,7 @@ export async function crawl(handle: string, options: CrawlOptions): Promise<Craw
 
   try {
     report("identity", `Looking up ${handle}`, null);
-    const did = await resolveHandle(handle);
+    const did = await resolveHandle(handle, signal);
     const pds = await resolvePds(did, signal);
     cachePds(did, pds);
     await setMeta("owner_did", did);

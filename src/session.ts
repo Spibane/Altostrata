@@ -310,7 +310,13 @@ export interface BookmarkedSubject {
 export async function listBookmarks(): Promise<BookmarkedSubject[]> {
   const out: BookmarkedSubject[] = [];
   let cursor: string | undefined;
-  for (;;) {
+  // Two independent stops, because this pages an endpoint whose behaviour is
+  // inferred rather than verified. A server that ignores an unrecognised
+  // `cursor` would keep answering with page 1 forever: rows non-empty, cursor
+  // truthy, no exit. That hangs sign-in permanently, since the caller awaits
+  // this before the button is re-enabled.
+  const MAX_PAGES = 100;
+  for (let page = 0; page < MAX_PAGES; page += 1) {
     const search = new URLSearchParams({ limit: "100" });
     if (cursor) search.set("cursor", cursor);
     const data = (await xrpc("app.bsky.bookmark.getBookmarks", {
@@ -329,7 +335,9 @@ export async function listBookmarks(): Promise<BookmarkedSubject[]> {
       const subject = row.subject ?? row.item;
       if (subject?.uri && subject.cid) out.push({ uri: subject.uri, cid: subject.cid });
     }
-    if (!data.cursor) break;
+    // A cursor that hasn't moved means the server is not paging the way this
+    // assumes, so stop rather than re-request the same page.
+    if (!data.cursor || data.cursor === cursor) break;
     cursor = data.cursor;
   }
   return out;

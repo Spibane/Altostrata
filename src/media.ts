@@ -5,6 +5,15 @@ export interface ViewImage {
   full: string;
   alt: string;
   aspectRatio: number | null;
+  /**
+   * The blob ref for *this* image, or null when the record carries none for it.
+   *
+   * Carried per-image rather than looked up by position. The view list and the
+   * record's blob list are built by separate passes that each drop unusable
+   * entries independently, so a malformed embed could shift them out of step and
+   * make "download the original" fetch a different picture than the one clicked.
+   */
+  original: OriginalRef | null;
 }
 
 interface EmbedViewImage {
@@ -41,7 +50,15 @@ function pickSource(node: EmbedView): EmbedView {
  * video view has no `images` and no `media`, so a shape test lands on undefined
  * and silently drops the post.
  */
-export function extractImages(embed: unknown): { images: ViewImage[]; isVideo: boolean } {
+export function extractImages(
+  embed: unknown,
+  /**
+   * Blob refs in the *record's* order, positions preserved (see
+   * `originalRefs`). Zipped in here, before any unusable view entry is dropped,
+   * so each rendered image keeps the ref that actually belongs to it.
+   */
+  recordRefs: Array<OriginalRef | null> = [],
+): { images: ViewImage[]; isVideo: boolean } {
   const node = embed as EmbedView | undefined;
   if (!node) return { images: [], isVideo: false };
 
@@ -61,6 +78,7 @@ export function extractImages(embed: unknown): { images: ViewImage[]; isVideo: b
               // The author's own description, not a generic placeholder.
               alt: source.alt ?? "",
               aspectRatio: width && height ? width / height : null,
+              original: recordRefs[0] ?? null,
             },
           ]
         : [],
@@ -68,7 +86,7 @@ export function extractImages(embed: unknown): { images: ViewImage[]; isVideo: b
     };
   }
 
-  const images = (source.images ?? []).flatMap((image): ViewImage[] => {
+  const images = (source.images ?? []).flatMap((image, index): ViewImage[] => {
     const thumb = image.thumb ?? image.fullsize;
     if (!thumb) return [];
     const width = image.aspectRatio?.width;
@@ -79,6 +97,7 @@ export function extractImages(embed: unknown): { images: ViewImage[]; isVideo: b
         full: image.fullsize ?? thumb,
         alt: image.alt ?? "",
         aspectRatio: width && height ? width / height : null,
+        original: recordRefs[index] ?? null,
       },
     ];
   });
@@ -150,21 +169,20 @@ function blobToOriginal(blob: BlobRef | undefined, fallbackMime: string): Origin
  * ever points at CDN derivatives, so this is what makes original-quality
  * downloads possible.
  */
-export function originalRefs(post: PostView): OriginalRef[] {
+export function originalRefs(post: PostView): Array<OriginalRef | null> {
   const embed: RecordEmbed | undefined = post.record?.embed;
   if (!embed) return [];
 
   const source: RecordEmbed = embed.images || embed.video ? embed : (embed.media ?? embed);
 
   if (source.video) {
-    const video = blobToOriginal(source.video, "video/mp4");
-    return video ? [video] : [];
+    return [blobToOriginal(source.video, "video/mp4")];
   }
 
-  return (source.images ?? []).flatMap((entry) => {
-    const original = blobToOriginal(entry.image, "image/jpeg");
-    return original ? [original] : [];
-  });
+  // `map`, not `flatMap`: an entry whose ref cannot be parsed becomes a null
+  // placeholder rather than vanishing, so later entries keep their positions and
+  // stay matched to the right view image.
+  return (source.images ?? []).map((entry) => blobToOriginal(entry.image, "image/jpeg"));
 }
 
 const EXTENSIONS: Record<string, string> = {
@@ -216,7 +234,11 @@ export interface DownloadTarget {
   uri: string;
   authorDid: string;
   handle: string;
-  refs: OriginalRef[];
+  /**
+   * Aligned one-to-one with the *rendered* images, nulls included, so an index
+   * taken from the DOM always addresses the image the reader actually clicked.
+   */
+  refs: Array<OriginalRef | null>;
 }
 
 /**
@@ -244,6 +266,8 @@ export async function downloadAllOriginals(
 ): Promise<number> {
   let saved = 0;
   for (let i = 0; i < target.refs.length; i += 1) {
+    // Positions with no usable ref are placeholders, not files to fetch.
+    if (!target.refs[i]) continue;
     await downloadOriginal(target, i, signal);
     saved += 1;
   }

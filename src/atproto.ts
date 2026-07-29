@@ -24,6 +24,24 @@ export function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * A sleep that gives up early when the signal fires. The retry backoff reaches
+ * 8s, so waiting it out blind made Stop look like it had done nothing — the
+ * abort was only noticed on the next attempt.
+ */
+function sleepUnlessAborted(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) return sleep(ms);
+  return new Promise((resolve) => {
+    const timer = setTimeout(done, ms);
+    function done(): void {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    }
+    signal.addEventListener("abort", done, { once: true });
+  });
+}
+
+/**
  * Lets the authenticated transport in `session.ts` share this module's queue.
  * Signing in must not create a second, unmetered request path.
  */
@@ -51,9 +69,17 @@ class HttpError extends Error {
     readonly status: number,
     body: string,
     url: string,
+    /** Seconds the server asked us to wait, when it said so. */
+    readonly retryAfterSeconds: number | null = null,
   ) {
     super(`HTTP ${status} for ${url}: ${body.slice(0, 200)}`);
   }
+}
+
+/** `Retry-After` is the one wait a rate limiter explicitly asks for; guessing shorter earns another 429. */
+function retryAfterMs(err: unknown): number | null {
+  if (!(err instanceof HttpError) || err.retryAfterSeconds === null) return null;
+  return Math.min(60_000, Math.max(0, err.retryAfterSeconds) * 1000);
 }
 
 export class AbortedError extends Error {
@@ -65,7 +91,14 @@ export class AbortedError extends Error {
 async function rawRequest(url: string, signal?: AbortSignal): Promise<Response> {
   const res = await fetch(url, { headers: { accept: "*/*" }, signal });
   if (!res.ok) {
-    throw new HttpError(res.status, await res.text().catch(() => ""), url);
+    const header = res.headers.get("retry-after");
+    const seconds = header === null ? null : Number(header);
+    throw new HttpError(
+      res.status,
+      await res.text().catch(() => ""),
+      url,
+      seconds !== null && Number.isFinite(seconds) ? seconds : null,
+    );
   }
   return res;
 }
@@ -86,9 +119,13 @@ async function request(url: string, signal?: AbortSignal, attempt = 0): Promise<
         : true; // network errors are worth retrying too
     if (!retriable || attempt >= 4) throw err;
 
-    const backoff = Math.min(30_000, 1000 * 2 ** attempt);
+    // Honours `Retry-After` when the server sends one — on a 429 that is the
+    // wait the server is actually asking for, and guessing shorter just earns
+    // another 429.
+    const backoff = retryAfterMs(err) ?? Math.min(30_000, 1000 * 2 ** attempt);
     console.warn(`retrying in ${Math.round(backoff / 1000)}s (${String(err).slice(0, 120)})`);
-    await sleep(backoff);
+    await sleepUnlessAborted(backoff, signal);
+    if (signal?.aborted) throw new AbortedError();
     return request(url, signal, attempt + 1);
   }
 }
@@ -113,12 +150,15 @@ function query(
 // Identity
 // ---------------------------------------------------------------------------
 
-export async function resolveHandle(handle: string): Promise<string> {
+export async function resolveHandle(handle: string, signal?: AbortSignal): Promise<string> {
   if (handle.startsWith("did:")) return handle;
   const clean = handle.trim().replace(/^@/, "").toLowerCase();
   if (!clean) throw new Error("Enter a handle first");
+  // Signal threaded through so Stop works during the identity phase too, which
+  // was previously the one stretch of a crawl the button could not interrupt.
   const data = (await getJson(
     query(APPVIEW, "com.atproto.identity.resolveHandle", { handle: clean }),
+    signal,
   )) as { did?: string };
   if (!data.did) throw new Error(`No such handle: ${handle}`);
   return data.did;
