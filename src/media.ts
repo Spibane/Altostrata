@@ -19,7 +19,18 @@ interface EmbedView {
   images?: EmbedViewImage[];
   thumbnail?: string;
   playlist?: string;
+  /** On a video view this is the blob CID, which is all playback needs. */
+  cid?: string;
+  alt?: string;
+  aspectRatio?: { width?: number; height?: number };
   media?: EmbedView;
+}
+
+/** Media can sit on the embed directly, or under `media` for recordWithMedia. */
+function pickSource(node: EmbedView): EmbedView {
+  return (node.$type ?? "").startsWith("app.bsky.embed.recordWithMedia")
+    ? (node.media ?? node)
+    : node;
 }
 
 /**
@@ -34,16 +45,25 @@ export function extractImages(embed: unknown): { images: ViewImage[]; isVideo: b
   const node = embed as EmbedView | undefined;
   if (!node) return { images: [], isVideo: false };
 
-  const outerType = node.$type ?? "";
-  const source = outerType.startsWith("app.bsky.embed.recordWithMedia")
-    ? (node.media ?? node)
-    : node;
+  const source = pickSource(node);
   const type = source.$type ?? "";
 
   if (type.startsWith("app.bsky.embed.video")) {
     const thumb = source.thumbnail;
+    const width = source.aspectRatio?.width;
+    const height = source.aspectRatio?.height;
     return {
-      images: thumb ? [{ thumb, full: thumb, alt: "Video thumbnail", aspectRatio: null }] : [],
+      images: thumb
+        ? [
+            {
+              thumb,
+              full: thumb,
+              // The author's own description, not a generic placeholder.
+              alt: source.alt ?? "",
+              aspectRatio: width && height ? width / height : null,
+            },
+          ]
+        : [],
       isVideo: true,
     };
   }
@@ -64,6 +84,42 @@ export function extractImages(embed: unknown): { images: ViewImage[]; isVideo: b
   });
 
   return { images, isVideo: false };
+}
+
+// ---------------------------------------------------------------------------
+// Video
+// ---------------------------------------------------------------------------
+
+export interface VideoRef {
+  /** Blob CID, which `com.atproto.sync.getBlob` turns into a playable MP4. */
+  cid: string;
+  /** HLS manifest. Plays natively only in Safari, so it is the fallback. */
+  playlist: string | null;
+  alt: string;
+  aspectRatio: number | null;
+}
+
+/**
+ * Everything needed to actually play a video post. The thumbnail alone is a poor
+ * stand-in — it is a single frame chosen by the server and often unrepresentative
+ * of the clip.
+ */
+export function extractVideo(embed: unknown): VideoRef | null {
+  const node = embed as EmbedView | undefined;
+  if (!node) return null;
+
+  const source = pickSource(node);
+  if (!(source.$type ?? "").startsWith("app.bsky.embed.video")) return null;
+  if (!source.cid) return null;
+
+  const width = source.aspectRatio?.width;
+  const height = source.aspectRatio?.height;
+  return {
+    cid: source.cid,
+    playlist: source.playlist ?? null,
+    alt: source.alt ?? "",
+    aspectRatio: width && height ? width / height : null,
+  };
 }
 
 // ---------------------------------------------------------------------------

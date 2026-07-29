@@ -1,6 +1,6 @@
 {
   "name": "altostrata",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "private": true,
   "type": "module",
   "description": "Rediscover old media posts from the people you follow on Bluesky, entirely in your browser",

@@ -1,5 +1,21 @@
 # Changelog
 
+### v2.2.1 - 2026-07-28
+
+- Video posts can now be played. Previously they showed only a thumbnail — a
+  server-chosen frame that frequently misrepresented the clip — with no way to
+  watch it
+- Playback fetches the original file and plays it from an object URL rather than
+  streaming from the PDS. Streaming starts faster, but `getBlob` ignores Range
+  requests, so any seek made the browser re-request from byte zero and threw
+  playback back to the start. Measured: seeking to 30s landed at 3.8s. With the
+  file loaded locally, seeks land exactly
+- Video posters now use the author's own alt text instead of the placeholder
+  "Video thumbnail", and the player inherits the post's aspect ratio so swapping
+  the poster for the video does not shift the page
+- The HLS manifest is kept as a fallback for when a blob cannot be fetched; it
+  would need a player library to work outside Safari
+
 ### v2.2.0 - 2026-07-28
 
 - Renamed the project from Strata to **Altostrata**. "Strata" collided with an

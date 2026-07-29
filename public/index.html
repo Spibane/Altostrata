@@ -455,6 +455,52 @@ main {
   object-fit: cover;
 }
 
+/* ---------- video ---------- */
+
+/* Aspect ratio comes from the post's own metadata, so swapping the poster for the
+   player does not shift the page. */
+.media figure.video img,
+.media figure.video video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+.play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 62px;
+  height: 62px;
+  padding: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--text);
+  background: color-mix(in srgb, var(--ink) 58%, transparent);
+  backdrop-filter: blur(6px);
+  border: 1px solid color-mix(in srgb, var(--text) 34%, transparent);
+  transition: background 0.15s ease, color 0.15s ease, transform 0.12s ease;
+}
+
+.play svg {
+  width: 23px;
+  height: 23px;
+  margin-left: 3px; /* optical centring: the triangle's mass sits left */
+}
+
+.play:hover:not(:disabled) {
+  background: var(--amber);
+  color: #1a1204;
+  border-color: var(--amber);
+  transform: translate(-50%, -50%) scale(1.06);
+}
+
+/* The whole file downloads before playback, so this can last a moment. */
+.play[data-state="loading"] { opacity: 0.5; }
+
 /* Per-image download, revealed on hover and always present for touch. */
 .grab {
   position: absolute;
@@ -672,6 +718,13 @@ dialog input[type="text"] { background: var(--ink); }
   @keyframes rise {
     from { opacity: 0; transform: translateY(8px); }
     to { opacity: 1; transform: none; }
+  }
+
+  /* Signals that a download is under way rather than that the click was ignored. */
+  .play[data-state="loading"] { animation: throb 1.1s ease-in-out infinite; }
+  @keyframes throb {
+    0%, 100% { opacity: 0.38; }
+    50% { opacity: 0.75; }
   }
 }
 </style>

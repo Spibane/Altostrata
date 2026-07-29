@@ -1,4 +1,4 @@
-import { AbortedError, getPosts, type PostView } from "./atproto.ts";
+import { AbortedError, fetchBlob, getPosts, type PostView } from "./atproto.ts";
 import { crawl, type CrawlProgress } from "./crawl.ts";
 import {
   authedTransport,
@@ -20,8 +20,10 @@ import {
   downloadAllOriginals,
   downloadOriginal,
   extractImages,
+  extractVideo,
   originalRefs,
   type DownloadTarget,
+  type VideoRef,
   type ViewImage,
 } from "./media.ts";
 import {
@@ -115,6 +117,9 @@ interface ActionState {
 /** Like/repost/bookmark state for what is on screen, keyed by post URI. */
 const actions = new Map<string, ActionState>();
 
+/** Playable video details for what is on screen, keyed by post URI. */
+const videos = new Map<string, VideoRef>();
+
 // ---------------------------------------------------------------------------
 // Formatting
 // ---------------------------------------------------------------------------
@@ -207,6 +212,9 @@ const ICONS = {
     `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
     `<path d="M14 3.5h6.5V10"/><path d="M20.5 3.5 12 12"/>` +
     `<path d="M18 14.5v4a2 2 0 0 1-2 2H5.5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/></svg>`,
+  play:
+    `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">` +
+    `<path d="M8 5.2v13.6a1 1 0 0 0 1.5.87l11.2-6.8a1 1 0 0 0 0-1.74L9.5 4.33A1 1 0 0 0 8 5.2z"/></svg>`,
 } as const;
 
 /**
@@ -258,6 +266,8 @@ function toCard(post: PostView, row: ShuffleRow): Card {
   const handle = post.author.handle;
 
   targets.set(post.uri, { uri: post.uri, authorDid: post.author.did, handle, refs });
+  const video = extractVideo(post.embed);
+  if (video) videos.set(post.uri, video);
   actions.set(post.uri, {
     cid: post.cid,
     likeUri: post.viewer?.like ?? null,
@@ -295,6 +305,8 @@ function gaugeHtml(card: Card): string {
 
 function mediaHtml(card: Card): string {
   const shown = card.images.slice(0, 4);
+  const playable = videos.get(card.uri);
+
   const items = shown
     .map((image, i) => {
       const grab =
@@ -304,6 +316,20 @@ function mediaHtml(card: Card): string {
                card.isVideo ? "Video" : "Original"
              }</span></button>`
           : "";
+
+      // A video poster is a server-chosen frame and frequently misleading, so the
+      // thumbnail is only ever a placeholder for the real player.
+      if (playable && i === 0) {
+        const ratio = playable.aspectRatio
+          ? ` style="aspect-ratio:${playable.aspectRatio.toFixed(4)}"`
+          : "";
+        return `<figure class="video"${ratio}>
+          <img src="${escapeHtml(image.thumb)}" alt="${escapeHtml(image.alt || "Video")}" loading="lazy">
+          <button class="play" data-play="${escapeHtml(card.uri)}" title="Play video"
+            aria-label="Play video">${ICONS.play}</button>${grab}
+        </figure>`;
+      }
+
       return `<figure>
         <a href="${escapeHtml(image.full)}" target="_blank" rel="noreferrer">
           <img src="${escapeHtml(image.thumb)}" alt="${escapeHtml(image.alt || "Untitled image")}" loading="lazy">
@@ -422,6 +448,8 @@ async function dig(afterMessage?: string): Promise<void> {
 
     targets.clear();
     actions.clear();
+    videos.clear();
+    releaseObjectUrls();
     const cards = hydrated.flatMap((post) => {
       const row = byUri.get(post.uri);
       if (!row) return [];
@@ -588,12 +616,84 @@ async function applyAction(button: HTMLButtonElement): Promise<void> {
   }
 }
 
+/** Object URLs for players on screen, revoked when the page of finds is replaced. */
+const objectUrls: string[] = [];
+
+function releaseObjectUrls(): void {
+  for (const url of objectUrls) URL.revokeObjectURL(url);
+  objectUrls.length = 0;
+}
+
+/**
+ * Swaps the poster for a real player, because a video thumbnail is a
+ * server-chosen frame and often says nothing about the clip.
+ *
+ * The whole file is fetched before playback rather than streamed from the PDS.
+ * Streaming the blob URL directly does start faster, but `getBlob` ignores Range
+ * requests: seeking makes the browser re-request from byte zero, so scrubbing
+ * throws playback back to the start. Handing the player a complete local blob
+ * costs a short wait and makes seeking work properly. Bluesky caps video length,
+ * so these are megabytes, not gigabytes.
+ *
+ * The HLS manifest would stream and seek correctly, but needs a player library
+ * outside Safari, so it stays a fallback.
+ *
+ * The download button is left in place — only the poster and the play control go.
+ */
+async function playVideo(button: HTMLButtonElement): Promise<void> {
+  const uri = button.dataset.play;
+  if (!uri) return;
+  const info = videos.get(uri);
+  const target = targets.get(uri);
+  const figure = button.closest("figure");
+  if (!info || !target || !figure) return;
+
+  button.disabled = true;
+  button.dataset.state = "loading";
+  button.setAttribute("aria-label", "Loading video");
+
+  const mount = (src: string): void => {
+    const ratio = info.aspectRatio ? ` style="aspect-ratio:${info.aspectRatio.toFixed(4)}"` : "";
+    figure.querySelector("img")?.remove();
+    figure.insertAdjacentHTML(
+      "afterbegin",
+      `<video controls autoplay playsinline${ratio}` +
+        `${info.alt ? ` aria-label="${escapeHtml(info.alt)}"` : ""}` +
+        ` src="${escapeHtml(src)}"></video>`,
+    );
+    button.remove();
+  };
+
+  try {
+    const blob = await fetchBlob(target.authorDid, info.cid);
+    const src = URL.createObjectURL(blob);
+    objectUrls.push(src);
+    mount(src);
+  } catch (err) {
+    if (info.playlist) {
+      mount(info.playlist);
+      return;
+    }
+    button.disabled = false;
+    delete button.dataset.state;
+    button.setAttribute("aria-label", "Play video");
+    ui.note.innerHTML =
+      `<strong>That video could not be loaded.</strong> ` +
+      escapeHtml(err instanceof Error ? err.message : err);
+  }
+}
+
 ui.results.addEventListener("click", (event) => {
   const node = event.target;
   // Element, not HTMLElement: every button in here contains an inline SVG, and a
   // click landing on the glyph makes the target an SVGPathElement. Narrowing to
   // HTMLElement silently swallowed those clicks, so only the padding worked.
   if (!(node instanceof Element)) return;
+  const play = node.closest<HTMLButtonElement>("button.play");
+  if (play) {
+    void playVideo(play);
+    return;
+  }
   const grab = node.closest<HTMLButtonElement>("button.grab");
   if (grab) {
     void handleGrab(grab);

@@ -4,7 +4,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-2.2.0-black)]()
+[![Version](https://img.shields.io/badge/version-2.2.1-black)]()
 [![Status](https://img.shields.io/badge/status-Beta-yellow)]()
 [![Changelog](https://img.shields.io/badge/changelog-blue)](./CHANGELOG.md)
 
@@ -47,8 +47,8 @@ APIs and keeps its index in IndexedDB.
                           │
                           ├──► getPosts ──► hydrate 25 at a time
                           │
-                          └──► card ──► SAVE ──► com.atproto.sync.getBlob
-                                                 the artist's original upload
+                          └──► card ──► PLAY / DOWNLOAD ──► com.atproto.sync.getBlob
+                                                            the original upload
 ```
 
 Reading needs no account at all: follows, author feeds, likes and reposts are
@@ -96,6 +96,9 @@ Four design consequences worth knowing:
   artist uploaded via `com.atproto.sync.getBlob` — not the CDN's re-encoded
   JPEG. Transparent PNGs stay transparent and video comes down as the source
   MP4 rather than an HLS playlist.
+- **Video plays inline.** A thumbnail is a server-chosen frame and often says
+  nothing about the clip, so video posts get a play button that loads the original
+  file. Seeking works, which it does not when streaming from a PDS.
 - **Like, repost and bookmark in place**, via OAuth. Liking from Altostrata also adds
   the post to your exclusions immediately, so it stops resurfacing without
   waiting for the next like sync — and unliking makes it findable again.
@@ -134,6 +137,10 @@ Four design consequences worth knowing:
   you follow and have muted.
 - **`posts_with_media` means images.** Video needs the `posts_with_video` filter
   as a separate pass.
+- **Video downloads fully before it plays.** A PDS ignores Range requests, so
+  streaming it directly makes any seek restart from the beginning. Loading the
+  whole file first costs a short wait and makes the scrubber work. Bluesky caps
+  video length, so these are megabytes.
 - **The depth gauge reflects what's indexed, not what exists.** Until an
   account is fully read, its true oldest post is probably older.
 
@@ -149,6 +156,7 @@ background while you browse.
 | **Older than** | Minimum age floor; `now` disables it |
 | **Allow repeats** | Include posts already surfaced |
 | **Include liked** | Re-admit posts you liked; reposts stay hidden either way |
+| **Play** | Load and play a video post's original file |
 | **Download** | Save the original file for that image or video |
 | **Like / Repost / Bookmark** | Acts on your account; prompts sign-in if needed |
 | **Sign in** | OAuth via Bluesky; nothing is required to browse or download |
