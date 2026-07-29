@@ -27,8 +27,15 @@ const decoder = new TextDecoder();
  * Anything other than http(s) is rendered as plain text. A facet's `uri` comes
  * from a stranger's post and lands in an href, so `javascript:` and `data:` are
  * live XSS vectors on a page that anyone can visit.
+ *
+ * Exported so `app.ts` can apply the same check to image/avatar URLs, which
+ * currently reach the DOM only `escapeHtml`'d — not scheme-checked. Not
+ * exploitable today, since those URLs come from the AppView's hydrated view
+ * objects rather than a stranger's raw record, but the invariant this file
+ * documents ("a uri goes into an href, so its scheme must be checked") should
+ * hold everywhere a uri goes into an href, not just here.
  */
-function safeHref(uri: string): string | null {
+export function safeHref(uri: string): string | null {
   try {
     const parsed = new URL(uri);
     return parsed.protocol === "http:" || parsed.protocol === "https:" ? uri : null;

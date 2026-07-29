@@ -208,8 +208,18 @@ const EXTENSIONS: Record<string, string> = {
   "video/webm": "webm",
 };
 
+/**
+ * Allowlist only, no fallback: both `blob.type` (the author's PDS chooses what
+ * `Content-Type` to answer `getBlob` with) and `ref.mimeType` (a field in the
+ * author's own record) are attacker-controlled. The previous fallback —
+ * deriving an extension from whatever mime type came back — meant a record
+ * declaring `mimeType: "text/html"` saved as a `.html` file, which opens in a
+ * browser on double-click. It can't reach this app's own origin or storage
+ * from there, but it's still a needless foothold for a string this app doesn't
+ * otherwise trust.
+ */
 function extensionFor(mimeType: string): string {
-  return EXTENSIONS[mimeType.toLowerCase()] ?? mimeType.split("/")[1]?.replace(/[^a-z0-9]/gi, "") ?? "bin";
+  return EXTENSIONS[mimeType.toLowerCase()] ?? "bin";
 }
 
 export function rkeyOf(uri: string): string {
@@ -225,8 +235,14 @@ export function filenameFor(
   mimeType: string,
 ): string {
   const safeHandle = handle.replace(/[^a-z0-9.-]/gi, "_");
+  // `rkeyOf` was the one unsanitized filename component. No traversal is
+  // actually reachable — `.pop()` already strips path separators, and the
+  // browser's `download` attribute sanitizes the name regardless — but an rkey
+  // is expected to be a plain identifier, so scrubbing it the same way the
+  // handle already is costs nothing.
+  const safeRkey = rkeyOf(uri).replace(/[^a-z0-9.-]/gi, "_");
   const suffix = total > 1 ? `_${index + 1}` : "";
-  return `${safeHandle}_${rkeyOf(uri)}${suffix}.${extensionFor(mimeType)}`;
+  return `${safeHandle}_${safeRkey}${suffix}.${extensionFor(mimeType)}`;
 }
 
 function saveBlob(blob: Blob, filename: string): void {

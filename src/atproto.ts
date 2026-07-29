@@ -191,6 +191,22 @@ export async function resolvePds(did: string, signal?: AbortSignal): Promise<str
   if (!service?.serviceEndpoint) {
     throw new Error(`No PDS endpoint in DID document for ${did}`);
   }
+  // Every author controls their own DID document (trivially for did:web, and
+  // for did:plc by signing a new operation), and this value is later used for
+  // every blob fetch and feed page for that author — a scheme other than https
+  // would mean this app makes requests of an attacker's choosing. A
+  // self-hosted PDS can legitimately be on any host, so only the scheme is
+  // restricted, not the host; http is allowed only for local development.
+  let parsed: URL;
+  try {
+    parsed = new URL(service.serviceEndpoint);
+  } catch {
+    throw new Error(`Malformed PDS endpoint in DID document for ${did}`);
+  }
+  const isLoopback = ["localhost", "127.0.0.1", "[::1]", "::1"].includes(parsed.hostname);
+  if (parsed.protocol !== "https:" && !(isLoopback && parsed.protocol === "http:")) {
+    throw new Error(`Untrusted PDS endpoint scheme for ${did}: ${parsed.protocol}`);
+  }
   const endpoint = service.serviceEndpoint.replace(/\/$/, "");
   pdsCache.set(did, endpoint);
   return endpoint;

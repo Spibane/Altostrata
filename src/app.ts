@@ -6,7 +6,7 @@ import {
   type Label,
   type PostView,
 } from "./atproto.ts";
-import { escapeHtml, renderRichText } from "./richtext.ts";
+import { escapeHtml, renderRichText, safeHref } from "./richtext.ts";
 import { crawl, type CrawlProgress } from "./crawl.ts";
 import {
   authedTransport,
@@ -212,6 +212,18 @@ function formatCount(value: number): string {
 // `.fillable` is filled by CSS once a gesture is active, the way a liked heart
 // goes solid on Bluesky.
 // ---------------------------------------------------------------------------
+
+/**
+ * `escapeHtml` alone stops attribute breakout but not the value itself being a
+ * `javascript:`/`data:` scheme — harmless in an `<img src>` (browsers won't
+ * execute it there) but this is the one place that check was documented as an
+ * invariant and not actually applied everywhere a URL lands in `src`/`href`.
+ * These URLs come from the AppView's hydrated view, not a stranger's raw
+ * record, so there's no known way to trigger the fallback today.
+ */
+function safeUrl(value: string): string {
+  return safeHref(value) ?? "about:blank";
+}
 
 function icon(paths: string, fillable = false): string {
   return (
@@ -500,7 +512,7 @@ function mediaHtml(card: Card): string {
           ? ` style="aspect-ratio:${playable.aspectRatio.toFixed(4)}"`
           : "";
         return `<figure class="video"${ratio}>
-          <img src="${escapeHtml(image.thumb)}" alt="${escapeHtml(image.alt)}" loading="lazy">
+          <img src="${escapeHtml(safeUrl(image.thumb))}" alt="${escapeHtml(image.alt)}" loading="lazy">
           <button class="play" data-play="${escapeHtml(card.uri)}" title="Play video"
             aria-label="Play video">${ICONS.play}</button>${grab}
         </figure>`;
@@ -522,9 +534,9 @@ function mediaHtml(card: Card): string {
       const singleRatio =
         shown.length === 1 && image.aspectRatio ? ` style="aspect-ratio:${image.aspectRatio.toFixed(4)}"` : "";
       return `<figure${singleRatio}>
-        <a href="${escapeHtml(image.full)}" target="_blank" rel="noreferrer"
+        <a href="${escapeHtml(safeUrl(image.full))}" target="_blank" rel="noreferrer"
            aria-label="View larger" data-zoom="${escapeHtml(card.uri)}" data-index="${i}">
-          <img src="${escapeHtml(image.thumb)}" alt="${escapeHtml(image.alt)}" loading="lazy">
+          <img src="${escapeHtml(safeUrl(image.thumb))}" alt="${escapeHtml(image.alt)}" loading="lazy">
         </a>${grab}
       </figure>`;
     })
@@ -619,7 +631,7 @@ function cardHtml(card: Card): string {
       <div class="byline">
         ${
           card.avatar
-            ? `<img class="avatar" src="${escapeHtml(card.avatar)}" alt="" loading="lazy">`
+            ? `<img class="avatar" src="${escapeHtml(safeUrl(card.avatar))}" alt="" loading="lazy">`
             : ""
         }
         <span>
@@ -693,10 +705,13 @@ function setDigFilter(filter: { did: string; handle: string } | undefined): void
 }
 
 /**
- * `afterMessage` is shown once the page has rendered. Callers cannot set the note
+ * `afterMessageHtml` is shown once the page has rendered. Raw HTML, not text —
+ * every current caller passes a literal string with only numeric interpolation,
+ * so keep it that way; anything else (a handle, an error message) must be
+ * `escapeHtml`'d before reaching here. Callers cannot set the note
  * themselves beforehand — digging clears it — so they hand it over instead.
  */
-async function dig(afterMessage?: string): Promise<void> {
+async function dig(afterMessageHtml?: string): Promise<void> {
   const generation = ++digGeneration;
   const superseded = (): boolean => generation !== digGeneration;
 
@@ -791,7 +806,7 @@ async function dig(afterMessage?: string): Promise<void> {
     markShown([...cards.map((card) => card.uri), ...unrenderable]).catch((err: unknown) => {
       console.warn("Could not record seen state", err);
     });
-    if (afterMessage) ui.note.innerHTML = afterMessage;
+    if (afterMessageHtml) ui.note.innerHTML = afterMessageHtml;
     scrollToTop();
   } catch (err) {
     if (superseded()) return;
@@ -1083,7 +1098,7 @@ function renderViewer(): void {
   const image = viewing.images[viewing.index];
   if (!image) return;
 
-  ui.lbImg.src = image.full;
+  ui.lbImg.src = safeUrl(image.full);
   ui.lbImg.alt = image.alt || "";
   ui.lbCaption.textContent = image.alt || "";
 
@@ -1877,4 +1892,15 @@ async function boot(): Promise<void> {
   await dig();
 }
 
-void boot();
+/**
+ * `frame-ancestors` in the CSP meta tag is silently ignored by every browser —
+ * it only takes effect as a response header, which GitHub Pages cannot send —
+ * so a framing page could otherwise overlay this one and clickjack a signed-in
+ * like/repost/bookmark. Weak in practice, since the attacker can't choose
+ * which random post is on screen to target, but the mitigation costs nothing.
+ */
+if (window.top !== window.self) {
+  document.documentElement.replaceChildren();
+} else {
+  void boot();
+}
