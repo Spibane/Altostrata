@@ -90,6 +90,14 @@ const ui = {
   resetAll: el<HTMLButtonElement>("reset-all"),
   closeSettings: el<HTMLButtonElement>("close-settings"),
   file: el<HTMLInputElement>("file"),
+  lightbox: el<HTMLDialogElement>("lightbox"),
+  lbImg: el<HTMLImageElement>("lb-img"),
+  lbPrev: el<HTMLButtonElement>("lb-prev"),
+  lbNext: el<HTMLButtonElement>("lb-next"),
+  lbClose: el<HTMLButtonElement>("lb-close"),
+  lbCaption: el("lb-caption"),
+  lbCount: el("lb-count"),
+  lbDownload: el<HTMLButtonElement>("lb-download"),
   signin: el<HTMLButtonElement>("signin"),
   who: el("who"),
   whoHandle: el("who-handle"),
@@ -120,6 +128,9 @@ const actions = new Map<string, ActionState>();
 
 /** Playable video details for what is on screen, keyed by post URI. */
 const videos = new Map<string, VideoRef>();
+
+/** Every image of each post on screen, so the viewer can page through them. */
+const galleries = new Map<string, ViewImage[]>();
 
 // ---------------------------------------------------------------------------
 // Formatting
@@ -211,6 +222,9 @@ const ICONS = {
   play:
     `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">` +
     `<path d="M8 5.2v13.6a1 1 0 0 0 1.5.87l11.2-6.8a1 1 0 0 0 0-1.74L9.5 4.33A1 1 0 0 0 8 5.2z"/></svg>`,
+  close: icon("M6.5 6.5l11 11M17.5 6.5l-11 11"),
+  prev: icon("M14.5 5.5 8 12l6.5 6.5"),
+  next: icon("M9.5 5.5 16 12l-6.5 6.5"),
 } as const;
 
 /**
@@ -265,6 +279,7 @@ function toCard(post: PostView, row: ShuffleRow): Card {
   targets.set(post.uri, { uri: post.uri, authorDid: post.author.did, handle, refs });
   const video = extractVideo(post.embed);
   if (video) videos.set(post.uri, video);
+  if (images.length > 0 && !video) galleries.set(post.uri, images);
   actions.set(post.uri, {
     cid: post.cid,
     likeUri: post.viewer?.like ?? null,
@@ -327,8 +342,11 @@ function mediaHtml(card: Card): string {
         </figure>`;
       }
 
+      // Still a real link: a plain click opens the viewer, but Cmd or middle click
+      // keeps working as a link to the original.
       return `<figure>
-        <a href="${escapeHtml(image.full)}" target="_blank" rel="noreferrer">
+        <a href="${escapeHtml(image.full)}" target="_blank" rel="noreferrer"
+           data-zoom="${escapeHtml(card.uri)}" data-index="${i}">
           <img src="${escapeHtml(image.thumb)}" alt="${escapeHtml(image.alt || "Untitled image")}" loading="lazy">
         </a>${grab}
       </figure>`;
@@ -462,6 +480,7 @@ async function dig(afterMessage?: string): Promise<void> {
     targets.clear();
     actions.clear();
     videos.clear();
+    galleries.clear();
     releaseObjectUrls();
     const cards = hydrated.flatMap((post) => {
       const row = byUri.get(post.uri);
@@ -499,6 +518,7 @@ async function showEmptyNote(): Promise<void> {
   targets.clear();
   actions.clear();
   videos.clear();
+  galleries.clear();
   releaseObjectUrls();
   ui.results.innerHTML = "";
   if (s.posts === 0) {
@@ -705,12 +725,132 @@ async function playVideo(button: HTMLButtonElement): Promise<void> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Image viewer
+//
+// Multi-image posts are cropped to square tiles so a page of finds stays on a
+// grid, which means the thumbnail is often not the whole picture. Opening the
+// original in a new tab answered that but threw you out of the app, losing the
+// page of finds you were part-way through.
+// ---------------------------------------------------------------------------
+
+let viewing: { uri: string; index: number; images: ViewImage[] } | undefined;
+
+function renderViewer(): void {
+  if (!viewing) return;
+  const image = viewing.images[viewing.index];
+  if (!image) return;
+
+  ui.lbImg.src = image.full;
+  ui.lbImg.alt = image.alt || "";
+  ui.lbCaption.textContent = image.alt || "";
+
+  const total = viewing.images.length;
+  ui.lbCount.textContent = total > 1 ? `${viewing.index + 1} / ${total}` : "";
+  ui.lbPrev.hidden = total < 2;
+  ui.lbNext.hidden = total < 2;
+
+  // Only offer the download when this image actually has an original on record.
+  const refs = targets.get(viewing.uri)?.refs.length ?? 0;
+  ui.lbDownload.hidden = viewing.index >= refs;
+}
+
+function openViewer(uri: string, index: number): void {
+  const images = galleries.get(uri);
+  if (!images || images.length === 0) return;
+  viewing = { uri, index: Math.min(Math.max(index, 0), images.length - 1), images };
+  renderViewer();
+  if (!ui.lightbox.open) ui.lightbox.showModal();
+}
+
+function stepViewer(delta: number): void {
+  if (!viewing || viewing.images.length < 2) return;
+  const total = viewing.images.length;
+  viewing.index = (viewing.index + delta + total) % total;
+  renderViewer();
+}
+
+ui.lbPrev.innerHTML = ICONS.prev;
+ui.lbNext.innerHTML = ICONS.next;
+ui.lbClose.innerHTML = ICONS.close;
+ui.lbDownload.innerHTML = `${ICONS.download}<span class="label">Original</span>`;
+
+/**
+ * Dropping the src releases the decoded full-size bitmap, the largest thing this
+ * page holds outside the index. Done here rather than only in a `close` handler so
+ * it does not hinge on one event: Escape closes the dialog without running any of
+ * our code, which is what the `close` listener below is for.
+ */
+function closeViewer(): void {
+  viewing = undefined;
+  ui.lbImg.removeAttribute("src");
+  if (ui.lightbox.open) ui.lightbox.close();
+}
+
+ui.lbPrev.addEventListener("click", () => stepViewer(-1));
+ui.lbNext.addEventListener("click", () => stepViewer(1));
+ui.lbClose.addEventListener("click", closeViewer);
+
+// A click landing on the dialog itself is a click on the surround, not the image.
+ui.lightbox.addEventListener("click", (event) => {
+  if (event.target === ui.lightbox) closeViewer();
+});
+
+ui.lightbox.addEventListener("keydown", (event) => {
+  if (event.key === "ArrowLeft") {
+    event.preventDefault();
+    stepViewer(-1);
+  } else if (event.key === "ArrowRight") {
+    event.preventDefault();
+    stepViewer(1);
+  }
+});
+
+// Covers the paths that bypass our buttons entirely — Escape, and the browser
+// closing the dialog itself.
+ui.lightbox.addEventListener("close", () => {
+  viewing = undefined;
+  ui.lbImg.removeAttribute("src");
+});
+
+ui.lbDownload.addEventListener("click", async () => {
+  if (!viewing) return;
+  const target = targets.get(viewing.uri);
+  if (!target) return;
+  const original = labelOf(ui.lbDownload);
+  ui.lbDownload.disabled = true;
+  ui.lbDownload.dataset.busy = "1";
+  try {
+    await downloadOriginal(target, viewing.index);
+    setLabel(ui.lbDownload, "Saved");
+  } catch (err) {
+    ui.lbDownload.dataset.failed = "1";
+    setLabel(ui.lbDownload, "Failed");
+    console.warn(err);
+  } finally {
+    ui.lbDownload.disabled = false;
+    delete ui.lbDownload.dataset.busy;
+    setTimeout(() => {
+      delete ui.lbDownload.dataset.failed;
+      setLabel(ui.lbDownload, original);
+    }, 2400);
+  }
+});
+
 ui.results.addEventListener("click", (event) => {
   const node = event.target;
   // Element, not HTMLElement: every button in here contains an inline SVG, and a
   // click landing on the glyph makes the target an SVGPathElement. Narrowing to
   // HTMLElement silently swallowed those clicks, so only the padding worked.
   if (!(node instanceof Element)) return;
+  // Modifier and non-primary clicks fall through to the anchor, so opening the
+  // original in a new tab still works for anyone who wants it.
+  const zoom = node.closest<HTMLAnchorElement>("a[data-zoom]");
+  if (zoom && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+    event.preventDefault();
+    openViewer(zoom.dataset.zoom ?? "", Number(zoom.dataset.index ?? 0));
+    return;
+  }
   const play = node.closest<HTMLButtonElement>("button.play");
   if (play) {
     void playVideo(play);

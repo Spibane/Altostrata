@@ -1,5 +1,22 @@
 # Changelog
 
+### v2.5.0 - 2026-07-28
+
+- Clicking an image now opens it in an overlay instead of a new tab. Multi-image
+  posts are cropped to square tiles so a page of finds stays on a grid, which
+  means the thumbnail frequently is not the whole picture — one measured case
+  showed a 1000x568 image inside a 369x369 tile, with nearly half of it cut away.
+  The only way to see the rest was a new tab, which threw you out of the app and
+  cost you the page you were part-way through
+- The overlay shows the full image with its aspect ratio intact, the author's alt
+  text as a caption, a position counter, and a download for the original
+- Arrow keys and on-screen chevrons page through a post's images; Escape, the
+  close button, or a click on the surround dismisses it
+- The thumbnail is still a real link, so Cmd, Ctrl or middle click continues to
+  open the original in a new tab. Only an unmodified left click is intercepted
+- Closing releases the decoded full-size image, which is the largest thing the
+  page holds outside the index itself
+
 ### v2.4.0 - 2026-07-28
 
 - Added a logo: three stacked bars of decreasing weight with an amber dot resting

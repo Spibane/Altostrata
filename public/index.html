@@ -697,6 +697,99 @@ figure:hover .grab, .grab:focus-visible { opacity: 1; }
   color: var(--dim);
 }
 
+/* ---------- lightbox ---------- */
+
+/* Its own dialog rules, because unlike the sheets this one is a frameless
+   viewport filler rather than a panel. */
+dialog.lightbox {
+  max-width: none;
+  width: 100vw;
+  height: 100dvh;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  display: none;
+  place-items: center;
+  overflow: hidden;
+}
+
+dialog.lightbox[open] { display: grid; }
+dialog.lightbox::backdrop { background: rgb(4 4 5 / 0.93); }
+
+/* Contain, never cover: the whole point is seeing what the grid crops off. */
+dialog.lightbox img {
+  max-width: 92vw;
+  max-height: calc(100dvh - 96px);
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 6px;
+  grid-area: 1 / 1;
+}
+
+.lb-nav {
+  position: fixed;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  color: var(--text);
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+.lb-nav:hover:not(:disabled) { border-color: var(--faint); background: var(--raised); }
+.lb-nav[hidden] { display: none; }
+.lb-prev { left: 16px; }
+.lb-next { right: 16px; }
+.lb-nav svg { width: 20px; height: 20px; }
+
+.lb-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  background: linear-gradient(to top, rgb(4 4 5 / 0.9), transparent);
+}
+
+.lb-caption {
+  font-size: 13px;
+  color: var(--dim);
+  flex: 1;
+  min-width: 0;
+  max-height: 3.2em;
+  overflow-y: auto;
+}
+
+.lb-count {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+/* Keeps the page behind from scrolling under the viewer. */
+html:has(dialog.lightbox[open]) { overflow: hidden; }
+
+@media (max-width: 700px) {
+  .lb-nav { width: 40px; height: 40px; }
+  .lb-prev { left: 8px; }
+  .lb-next { right: 8px; }
+  .lb-caption { display: none; }
+}
+
 /* ---------- dialogs ---------- */
 
 dialog {
@@ -932,6 +1025,18 @@ dialog input[type="text"] { background: var(--ink); }
     <div class="row close">
       <button class="ghost" id="auth-close" type="button">Cancel</button>
     </div>
+  </div>
+</dialog>
+
+<dialog id="lightbox" class="lightbox" aria-label="Image viewer">
+  <button class="lb-nav lb-prev" id="lb-prev" aria-label="Previous image"></button>
+  <img id="lb-img" alt="">
+  <button class="lb-nav lb-next" id="lb-next" aria-label="Next image"></button>
+  <div class="lb-bar">
+    <span class="lb-caption" id="lb-caption"></span>
+    <span class="lb-count" id="lb-count"></span>
+    <button class="act" id="lb-download" title="Download the original file"></button>
+    <button class="act" id="lb-close" aria-label="Close viewer"></button>
   </div>
 </dialog>
 

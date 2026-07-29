@@ -4,7 +4,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-2.4.0-black)]()
+[![Version](https://img.shields.io/badge/version-2.5.0-black)]()
 [![Status](https://img.shields.io/badge/status-Beta-yellow)]()
 [![Changelog](https://img.shields.io/badge/changelog-blue)](./CHANGELOG.md)
 
@@ -99,6 +99,11 @@ Four design consequences worth knowing:
 - **Mentions, links and hashtags are clickable**, rendered from the post's own
   facets so a shortened link still points at its real target. Only `http` and
   `https` are honoured, since post text comes from strangers.
+- **Images open in an overlay, not a new tab.** Posts with several images are
+  cropped to square tiles to keep a page on a grid, so a thumbnail is often not
+  the whole picture. Clicking one opens it uncropped in place, with arrow keys to
+  page through the post — without losing the page of finds you were reading.
+  Cmd or middle click still opens the original in a tab.
 - **Video plays inline.** A thumbnail is a server-chosen frame and often says
   nothing about the clip, so video posts get a play button that loads the original
   file. Seeking works, which it does not when streaming from a PDS.
@@ -159,6 +164,7 @@ background while you browse.
 | **Older than** | Minimum age floor; `now` disables it |
 | **Allow repeats** | Include posts already surfaced |
 | **Include liked** | Re-admit posts you liked; reposts stay hidden either way |
+| **Click an image** | Open it uncropped in an overlay; arrows page through the post |
 | **Play** | Load and play a video post's original file |
 | **Download** | Save the original file for that image or video |
 | **Like / Repost / Bookmark** | Acts on your account; prompts sign-in if needed |
