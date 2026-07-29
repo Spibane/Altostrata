@@ -553,8 +553,10 @@ const POST_FIELDS = ["uri", "cid", "authorDid", "createdAt", "embedType", "media
 export interface IndexFile {
   version: number;
   exportedAt: string;
-  owner: { did: string | null; handle: string | null };
-  checkpoints: { likeHighRkey: string | null; repostHighRkey: string | null };
+  // Optional on the way in: this type also describes files handed to us by a
+  // user, which may be older exports or edited by hand.
+  owner?: { did: string | null; handle: string | null };
+  checkpoints?: { likeHighRkey: string | null; repostHighRkey: string | null };
   authorFields?: readonly string[];
   authors: unknown[][];
   postFields?: readonly string[];
@@ -594,12 +596,60 @@ export async function exportIndex(): Promise<IndexFile> {
   };
 }
 
+/**
+ * Field names come from the imported file, so `__proto__` and friends must not be
+ * able to reach an object's prototype. A null-prototype object has none to reach.
+ */
 function rowToObject(fields: readonly string[], row: unknown[]): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
+  const out = Object.create(null) as Record<string, unknown>;
   fields.forEach((field, i) => {
+    if (field === "__proto__" || field === "constructor" || field === "prototype") return;
     out[field] = row[i] ?? null;
   });
   return out;
+}
+
+function asRows(value: unknown, label: string): unknown[][] {
+  if (!Array.isArray(value)) throw new Error(`Missing or malformed "${label}" list`);
+  const bad = value.findIndex((row) => !Array.isArray(row));
+  if (bad !== -1) throw new Error(`Entry ${bad + 1} of "${label}" is not a row`);
+  return value as unknown[][];
+}
+
+/**
+ * Checked in full *before* anything is written, because importing replaces the
+ * whole index. Validating as we went would leave a half-wiped index behind on a
+ * malformed file — and an export is exactly what someone reaches for after losing
+ * data, so destroying it on a wrong pick is the worst possible failure.
+ */
+function validateIndexFile(file: IndexFile): void {
+  if (!file || typeof file !== "object") throw new Error("That file is not an index export");
+  if (file.version !== 1) {
+    throw new Error(`Unsupported index version ${String(file.version)} — expected 1`);
+  }
+  asRows(file.authors, "authors");
+  asRows(file.posts, "posts");
+  asRows(file.excluded, "excluded");
+
+  for (const [key, value] of [
+    ["authorFields", file.authorFields],
+    ["postFields", file.postFields],
+    ["excludedFields", file.excludedFields],
+  ] as const) {
+    if (value !== undefined && !Array.isArray(value)) {
+      throw new Error(`Malformed "${key}" in that file`);
+    }
+  }
+
+  // A row with no URI would import as the string "undefined" and poison selection.
+  const postFields = file.postFields ?? POST_FIELDS;
+  const uriAt = postFields.indexOf("uri");
+  if (file.posts.length > 0 && uriAt === -1) throw new Error(`"postFields" does not include a uri`);
+}
+
+function toWholeNumber(value: unknown, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 export interface ImportResult {
@@ -616,7 +666,7 @@ export async function importIndex(
   file: IndexFile,
   onProgress?: (message: string) => void,
 ): Promise<ImportResult> {
-  if (file.version !== 1) throw new Error(`Unsupported index version ${file.version}`);
+  validateIndexFile(file);
 
   await resetAll();
 
@@ -635,7 +685,9 @@ export async function importIndex(
         handle: String(o.handle ?? "unknown"),
         displayName: o.displayName === null ? null : String(o.displayName),
         cursor: o.cursor === null ? null : String(o.cursor),
-        complete: Number(o.complete ?? 0),
+        // A NaN here would silently drop the row out of the by_complete index,
+        // leaving an author that never gets crawled and never reports done.
+        complete: toWholeNumber(o.complete, 0),
         lastCrawled: o.lastCrawled === null ? null : String(o.lastCrawled),
         oldest: o.oldest === null ? null : String(o.oldest),
         newest: o.newest === null ? null : String(o.newest),
@@ -658,7 +710,7 @@ export async function importIndex(
         authorDid: String(o.authorDid),
         createdAt: String(o.createdAt),
         embedType: String(o.embedType ?? "images"),
-        mediaCount: Number(o.mediaCount ?? 1),
+        mediaCount: toWholeNumber(o.mediaCount, 1),
         rnd: Math.random(),
       } satisfies PostRow);
     }
@@ -676,14 +728,20 @@ export async function importIndex(
     await done;
   }
 
+  // All three, so a future change to loadSets that refreshes them independently
+  // cannot leave a stale liked subset behind.
   excludedSet = undefined;
+  likedSet = undefined;
   seenSet = undefined;
 
-  if (file.owner.did) await setMeta("owner_did", file.owner.did);
-  if (file.owner.handle) await setMeta("owner_handle", file.owner.handle);
-  if (file.checkpoints.likeHighRkey) await setMeta("like_high_rkey", file.checkpoints.likeHighRkey);
-  if (file.checkpoints.repostHighRkey) {
-    await setMeta("repost_high_rkey", file.checkpoints.repostHighRkey);
+  // Optional: an export from an older build, or a hand-trimmed one, may omit these.
+  if (file.owner?.did) await setMeta("owner_did", String(file.owner.did));
+  if (file.owner?.handle) await setMeta("owner_handle", String(file.owner.handle));
+  if (file.checkpoints?.likeHighRkey) {
+    await setMeta("like_high_rkey", String(file.checkpoints.likeHighRkey));
+  }
+  if (file.checkpoints?.repostHighRkey) {
+    await setMeta("repost_high_rkey", String(file.checkpoints.repostHighRkey));
   }
 
   return {

@@ -5,6 +5,26 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Altostrata</title>
 <meta name="description" content="Rediscover old media posts from the people you follow on Bluesky. Runs entirely in your browser.">
+<!-- Cards are assembled as HTML strings from other people's posts, so escaping is
+     load-bearing. This makes a slip non-fatal: with script-src 'self' an injected
+     inline script or onerror attribute cannot run. connect-src, img-src and
+     media-src stay open to https because a PDS can be on any host. style-src needs
+     unsafe-inline for the stylesheet in this file. frame-ancestors is omitted
+     deliberately — it is ignored in a meta policy, and GitHub Pages cannot set
+     headers. -->
+<meta http-equiv="Content-Security-Policy" content="
+  default-src 'none';
+  script-src 'self';
+  style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+  font-src https://fonts.gstatic.com;
+  img-src 'self' https: data:;
+  media-src 'self' https: blob:;
+  connect-src 'self' https:;
+  worker-src 'self' blob:;
+  base-uri 'none';
+  form-action 'none';
+  object-src 'none'">
+<meta name="referrer" content="no-referrer">
 <meta name="theme-color" content="#0a0a0b">
 <!-- Declares the page as already-dark, so browsers and extensions that offer to
      darken pages can detect there is nothing to do. -->

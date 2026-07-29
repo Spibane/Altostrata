@@ -1,5 +1,36 @@
 # Changelog
 
+### v2.3.1 - 2026-07-28
+
+Findings from a full pass over the codebase for bugs and weaknesses.
+
+- **Fixed data loss on a failed import.** Importing validated only the file
+  version, wiped the index, and then read fields that a malformed file does not
+  have — so picking the wrong file destroyed the index and reported
+  "Cannot read properties of undefined". Reproduced at 967 posts to zero. The
+  whole payload is now checked before anything is written, and a bad file leaves
+  the index untouched with a message that says what was wrong
+- Hardened import against prototype pollution: field names come from the file, so
+  rows are assembled on a null-prototype object and `__proto__`, `constructor`
+  and `prototype` are rejected as field names
+- **Fixed cards whose Play and Download buttons did nothing.** Six controls
+  trigger a dig, but only the Dig button guarded against overlap. Two digs racing
+  meant the slower one cleared the card state the faster one had just written.
+  Digs are now numbered, and a superseded one abandons without touching shared
+  state, the page or the button
+- Added a Content-Security-Policy. Cards are assembled as HTML strings from other
+  people's posts, so `script-src 'self'` keeps an escaping slip from becoming
+  script execution. `connect-src`, `img-src` and `media-src` stay open to https
+  because a PDS can be on any host
+- Added a `no-referrer` policy
+- Reported running out of storage mid-crawl as itself, noting the partial index is
+  kept, rather than surfacing an opaque DOM error
+- Fixed a malformed `complete` value importing as `NaN`, which dropped an author
+  out of the index that drives crawling — leaving an account that was never
+  crawled and never reported done
+- Released video object URLs and cleared card state when a dig comes back empty,
+  rather than only when it comes back full
+
 ### v2.3.0 - 2026-07-28
 
 - Mentions, links and hashtags in post text are now clickable, rendered from the

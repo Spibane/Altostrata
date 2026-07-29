@@ -408,10 +408,21 @@ function cardHtml(card: Card): string {
 // ---------------------------------------------------------------------------
 
 /**
+ * Digs are numbered so a slower one cannot finish on top of a faster one. Six
+ * different controls call this, and the shared card state is keyed by URI: an
+ * older dig clearing `targets` after a newer one filled it leaves cards on screen
+ * whose Play and Download buttons quietly do nothing.
+ */
+let digGeneration = 0;
+
+/**
  * `afterMessage` is shown once the page has rendered. Callers cannot set the note
  * themselves beforehand — digging clears it — so they hand it over instead.
  */
 async function dig(afterMessage?: string): Promise<void> {
+  const generation = ++digGeneration;
+  const superseded = (): boolean => generation !== digGeneration;
+
   ui.dig.disabled = true;
   ui.dig.textContent = "Digging";
   ui.note.textContent = "";
@@ -424,6 +435,8 @@ async function dig(afterMessage?: string): Promise<void> {
       includeLiked: ui.liked.checked,
       maxPerAuthor: 2,
     });
+
+    if (superseded()) return;
 
     if (rows.length === 0) {
       await showEmptyNote();
@@ -442,6 +455,9 @@ async function dig(afterMessage?: string): Promise<void> {
     const returned = new Set(hydrated.map((post) => post.uri));
     const missing = rows.map((row) => row.uri).filter((uri) => !returned.has(uri));
     if (missing.length > 0) await deletePosts(missing);
+
+    // Last point of no return: everything below mutates shared state and the DOM.
+    if (superseded()) return;
 
     targets.clear();
     actions.clear();
@@ -464,17 +480,26 @@ async function dig(afterMessage?: string): Promise<void> {
     if (afterMessage) ui.note.innerHTML = afterMessage;
     window.scrollTo({ top: 0, behavior: "smooth" });
   } catch (err) {
+    if (superseded()) return;
     ui.note.innerHTML = `<strong>Could not load posts.</strong> ${escapeHtml(
       err instanceof Error ? err.message : err,
     )}`;
   } finally {
-    ui.dig.disabled = false;
-    ui.dig.textContent = "Dig";
+    // A superseded dig must not re-enable the button while the newer one runs.
+    if (!superseded()) {
+      ui.dig.disabled = false;
+      ui.dig.textContent = "Dig";
+    }
   }
 }
 
 async function showEmptyNote(): Promise<void> {
   const s = await stats();
+  // Cards are going away, so their state and any object URLs go with them.
+  targets.clear();
+  actions.clear();
+  videos.clear();
+  releaseObjectUrls();
   ui.results.innerHTML = "";
   if (s.posts === 0) {
     ui.note.innerHTML = `<strong>Nothing indexed yet.</strong> The crawl has not found any media posts.`;
@@ -862,7 +887,14 @@ async function runCrawl(handle: string, options: { deep: boolean }): Promise<voi
     setTimeout(hideProgress, 2500);
   } catch (err) {
     if (err instanceof AbortedError) return;
-    const message = err instanceof Error ? err.message : String(err);
+    // Running out of quota mid-crawl otherwise reads as an opaque DOM error, when
+    // the useful thing to say is that the index so far is intact and usable.
+    const quota = err instanceof DOMException && err.name === "QuotaExceededError";
+    const message = quota
+      ? "This browser is out of storage for the index. What has been found so far is kept — export it, or free space and dig again."
+      : err instanceof Error
+        ? err.message
+        : String(err);
     if (ui.setup.hidden) {
       ui.note.innerHTML = `<strong>The crawl stopped early.</strong> ${escapeHtml(message)}`;
       hideProgress();
@@ -1001,7 +1033,8 @@ ui.exportBtn.addEventListener("click", async () => {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `altostrata-index-${(file.owner.handle ?? "export").replace(/[^a-z0-9.-]/gi, "_")}.json`;
+    const label = (file.owner?.handle ?? "export").replace(/[^a-z0-9.-]/gi, "_");
+    anchor.download = `altostrata-index-${label}.json`;
     document.body.append(anchor);
     anchor.click();
     anchor.remove();
