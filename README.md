@@ -4,7 +4,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-2.7.0-black)]()
+[![Version](https://img.shields.io/badge/version-2.8.0-black)]()
 [![Status](https://img.shields.io/badge/status-Beta-yellow)]()
 [![Changelog](https://img.shields.io/badge/changelog-blue)](./CHANGELOG.md)
 
@@ -95,7 +95,15 @@ Four design consequences worth knowing:
   thereafter. Likes can be re-admitted with a toggle when you want to revisit
   favourites; reposts and bookmarks stay hidden either way.
 - **Dig within one account.** Clicking a handle scopes every subsequent Dig to
-  just that person until you clear the filter or start a new index.
+  just that person until you clear the filter or start a new index. The same
+  filter can be reached from the Index panel by searching for an account you
+  haven't stumbled onto yet — it shows each account's post count and indexed
+  date range, and survives a reload instead of reverting to global digging.
+- **A local "kept" shelf.** Every find gets a star, alongside like/repost/
+  bookmark, that holds it on this device and stops it from resurfacing — no
+  sign-in required, so a signed-out visitor still has a way to hang onto
+  something instead of losing it the moment it scrolls past. Viewable as its
+  own full page from the Index panel.
 - **Moderation labels blur in place**, with the label's own name on the cover
   and a tap to reveal — configurable in the Index panel to always show or hide
   labelled posts entirely instead. The crawl is anonymous, so this can't see
@@ -179,8 +187,9 @@ background while you browse.
 | **Play** | Load and play a video post's original file |
 | **Download** | Save the original file for that image or video |
 | **Like / Repost / Bookmark** | Acts on your account; prompts sign-in if needed |
+| **Star** | Keeps a find on this device so it stops resurfacing; no sign-in needed |
 | **Sign in** | OAuth via Bluesky; nothing is required to browse or download |
-| **Index** | Stats, dig deeper, reset seen posts, export/import, start over |
+| **Index** | Stats, dig deeper, reset seen posts, search an account to dig, view kept posts, export/import, start over |
 
 ## Deploying
 

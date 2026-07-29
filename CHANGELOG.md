@@ -1,5 +1,30 @@
 # Changelog
 
+### v2.8.0 - 2026-07-29
+
+- **A local "kept" shelf.** Every find gets a star, alongside like/repost/
+  bookmark, that holds it on this device and stops it from ever resurfacing —
+  no sign-in required, so a signed-out visitor finally has a way to hang onto
+  something instead of losing it the moment it scrolls past. Backed by a new
+  `kept` IndexedDB store; wiped by "Start over" like everything else
+- **An account picker in the Index panel.** Search any followed account by
+  handle to dig only its posts, without waiting to stumble onto it first.
+  Shows each account's post count and indexed date range. The chosen filter
+  now survives a reload instead of silently reverting to global digging
+- **Kept posts get a full page**, not a cramped box wedged into the Index
+  dialog — same header, same cards, same gauge, reached via "View kept posts"
+  and left via "Back to digging" or just digging again
+- **Digging one account moved to its own sticky sub-header row** instead of
+  sharing the main bar with Dig/Older than/Index/Sign in, which it could push
+  off screen on a narrower window
+- **The Index panel's close button is now sticky**, reachable without
+  scrolling past everything the panel has grown to hold; clicking outside the
+  panel also closes it now
+- Removed the distracting default focus ring that appeared around the page of
+  finds and the Index panel's title on every load — both are focused by
+  script for screen readers' benefit, never reachable by an actual Tab press,
+  so the ring had nothing to make visible
+
 ### v2.7.0 - 2026-07-29
 
 A full sweep across bugs, WCAG 2.2 AA accessibility, usability and security,

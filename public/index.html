@@ -359,7 +359,6 @@ button.ghost:hover:not(:disabled) {
   gap: 8px;
   font-size: 12.5px;
   color: var(--dim);
-  white-space: nowrap;
 }
 
 .digging-as strong {
@@ -372,10 +371,28 @@ button.ghost:hover:not(:disabled) {
   font-size: 10px;
 }
 
+/* A second row inside `<header>`, below `.bar` — inherits the header's own
+   sticky positioning for free. Kept off the main row so digging one account
+   never competes with Dig/Index/Sign in for space on a narrower window. */
+.sub-bar {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 10px 24px;
+  justify-content: space-between;
+  border-top: 1px solid var(--line);
+}
+
 :focus-visible {
   outline: 2px solid var(--amber);
   outline-offset: 2px;
 }
+
+/* `#results` is focusable only via script (`tabindex="-1"`; see the markup
+   comment), never by a real Tab press, so every focus it receives is `dig()`
+   or `showKeptPage()` moving focus there after a page loads — not a keyboard
+   navigation the ring exists to make visible. Screen readers still get the
+   focus-moved announcement regardless of whether the ring paints. */
+#results:focus-visible { outline: none; }
 
 /* ---------- progress strip ---------- */
 
@@ -878,6 +895,15 @@ figure:hover .grab, .grab:focus-visible { opacity: 1; }
 
 .act.open:hover { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 55%, transparent); }
 
+/* Amber, matching the depth rail: kept is the local "hang onto this" gesture,
+   distinct from the three Bluesky writes it sits beside. */
+.act.keep:hover:not(:disabled) { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 55%, transparent); }
+.act.keep[aria-pressed="true"] {
+  color: var(--amber);
+  border-color: color-mix(in srgb, var(--amber) 55%, transparent);
+  background: color-mix(in srgb, var(--amber) 12%, transparent);
+}
+
 /* Icons stay visible while signed out — muted rather than hidden, since the
    click still opens the sign-in dialog. The per-kind hover colours would
    otherwise suggest the tap will like/repost/save immediately.
@@ -1008,19 +1034,50 @@ dialog {
   border-radius: 10px;
   max-width: 520px;
   width: calc(100% - 40px);
+  /* Explicit rather than relying on the UA default: the Index panel now
+     routinely runs taller than the viewport (account picker, kept posts),
+     and `.sheet-head`'s `position: sticky` needs this element to be the
+     scrolling ancestor for that to have any effect. */
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
   padding: 0;
 }
 
 dialog::backdrop { background: rgb(4 4 5 / 0.76); }
 
-.sheet { padding: 26px 28px 24px; }
+.sheet { padding: 0 28px 24px; }
 
 .sheet h2 {
   font-family: var(--serif);
   font-weight: 300;
   font-size: 24px;
-  margin: 0 0 20px;
+  margin: 0;
 }
+
+/* Sticky within the dialog's own scroll container (see `dialog`'s
+   `overflow-y`) — the title and close button stay reachable no matter how
+   far down the panel has been scrolled. Solid background so content
+   scrolling underneath doesn't show through the gap `.sheet`'s padding
+   would otherwise leave around it. */
+.sheet-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--panel);
+  padding: 26px 28px 20px;
+  margin: 0 -28px 0;
+}
+
+.sheet-head h2:focus-visible { outline: none; }
+
+/* `#close-settings`, not `.sheet-close`: `.sheet button.ghost` below is more
+   specific than a single class and would otherwise win the padding back. */
+#close-settings.sheet-close { padding: 8px; flex: none; }
+.sheet-close .icon { width: 16px; height: 16px; }
 
 .sheet dl {
   display: grid;
@@ -1069,6 +1126,65 @@ dialog input[type="text"] { background: var(--ink); }
 }
 
 .sheet .close { margin-top: 8px; }
+
+.sheet-sub {
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin: 22px 0 8px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+#author-search { width: 100%; }
+
+.author-list {
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+
+button.author-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: none;
+  font-family: var(--mono);
+}
+
+.author-list button.author-row:last-child { border-bottom: none; }
+button.author-row:hover { background: var(--raised); }
+.author-handle { font-size: 12.5px; color: var(--text); }
+.author-meta { font-size: 11px; color: var(--faint); }
+
+/* Stands in for the normal controls row while browsing the kept list — same
+   width and position as the pages of finds it replaces, since kept posts
+   render through the exact same `cardHtml()` as a normal dig. */
+.kept-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding-bottom: 24px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13.5px;
+  color: var(--dim);
+}
+
+.kept-banner strong { color: var(--text); font-weight: 500; }
 
 .danger { color: #ff8a6a; border-color: color-mix(in srgb, #ff8a6a 40%, transparent); }
 .danger:hover:not(:disabled) { color: #ffa48a; }
@@ -1193,10 +1309,6 @@ dialog input[type="text"] { background: var(--ink); }
       <div class="tagline" id="tagline">Media posts from your follows, dug up at random</div>
       <div class="controls-row controls-row-1" id="controls-row-1" hidden>
         <button class="dig" id="dig">Dig</button>
-        <span class="digging-as" id="digging-as" hidden>
-          Digging <strong id="digging-handle"></strong>
-          <button class="ghost" id="clear-dig-filter" title="Stop digging just this account">Clear</button>
-        </span>
       </div>
     </div>
     <div class="controls-row controls-row-2" id="controls-row-2" hidden>
@@ -1264,6 +1376,15 @@ dialog input[type="text"] { background: var(--ink); }
       </div>
     </div>
   </div>
+  <!-- Its own row rather than squeezed into `.bar` alongside Dig — that
+       crowded the one row every other header control lives on, and on a
+       narrower window pushed Index/Sign in off screen entirely. Living inside
+       `<header>` means it inherits the header's own sticky positioning for
+       free, with nothing extra to keep in sync. -->
+  <div class="sub-bar digging-as" id="digging-as" hidden>
+    <span>Digging <strong id="digging-handle"></strong></span>
+    <button class="ghost" id="clear-dig-filter" title="Stop digging just this account">Clear</button>
+  </div>
   <div class="progress" id="progress" hidden>
     <div class="track" id="track" role="progressbar" aria-valuemin="0" aria-valuemax="100"
          aria-labelledby="progress-label">
@@ -1312,6 +1433,14 @@ dialog input[type="text"] { background: var(--ink); }
     </p>
   </section>
 
+  <!-- Shown instead of the normal dig controls while browsing the kept list —
+       full-page, using the exact same card markup as a page of finds, rather
+       than a cramped scroll box wedged inside the Index dialog. -->
+  <div class="kept-banner" id="kept-banner" hidden>
+    <span>Viewing <strong id="kept-banner-count"></strong> kept post<span id="kept-banner-plural">s</span></span>
+    <button class="ghost" id="exit-kept">Back to digging</button>
+  </div>
+
   <!-- tabindex="-1": focusable by script only, so a dig can move focus here
        (see `dig()` in app.ts) without adding a stop to Tab order. Every dig
        replaces this element's entire contents, which used to drop keyboard
@@ -1323,7 +1452,19 @@ dialog input[type="text"] { background: var(--ink); }
 
 <dialog id="settings" aria-labelledby="settings-title">
   <div class="sheet">
-    <h2 id="settings-title">Index</h2>
+    <!-- Sticky, not just top-of-content: the panel grew past a single
+         screenful once the account picker and kept-post list joined it, and a
+         close control that only existed after scrolling all the way down was
+         no longer a reasonable way to close it. -->
+    <div class="sheet-head">
+      <h2 id="settings-title" tabindex="-1">Index</h2>
+      <button class="ghost icon-btn sheet-close" id="close-settings" aria-label="Close">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>
+        </svg>
+      </button>
+    </div>
     <dl id="stats"></dl>
 
     <label class="field" for="label-policy">
@@ -1353,6 +1494,22 @@ dialog input[type="text"] { background: var(--ink); }
       again. Your index and your like exclusions are kept.
     </p>
 
+    <h3 class="sheet-sub">Dig one account</h3>
+    <p class="caption">Search an account you follow to dig only its posts.</p>
+    <div class="row">
+      <label class="visually-hidden" for="author-search">Search accounts by handle</label>
+      <input type="text" id="author-search" placeholder="Search by handle" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="author-list" id="author-list"></div>
+
+    <h3 class="sheet-sub">Kept posts</h3>
+    <p class="caption">
+      Starred finds, held here regardless of sign-in. They never resurface while digging.
+    </p>
+    <div class="row">
+      <button class="ghost" id="view-kept">View kept posts</button>
+    </div>
+
     <div class="row">
       <button class="ghost" id="export">Export index</button>
       <button class="ghost" id="import">Import index</button>
@@ -1366,10 +1523,6 @@ dialog input[type="text"] { background: var(--ink); }
       <button class="ghost danger" id="reset-all">Start over</button>
     </div>
     <p class="caption">Erases the whole local index, including which account it was built for.</p>
-
-    <div class="row close">
-      <button class="ghost" id="close-settings">Close</button>
-    </div>
   </div>
 </dialog>
 

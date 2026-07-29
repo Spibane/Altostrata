@@ -7,7 +7,7 @@
  * distinctive, not current.
  */
 const DB_NAME = "strata";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 export interface AuthorRow {
   did: string;
@@ -38,6 +38,7 @@ export interface Stats {
   excluded: number;
   seen: number;
   unseen: number;
+  kept: number;
   oldest: string | null;
 }
 
@@ -91,6 +92,12 @@ function openDb(): Promise<IDBDatabase> {
       // Kept out of `posts` so clearing seen state is a single store wipe.
       if (!db.objectStoreNames.contains("seen")) {
         db.createObjectStore("seen", { keyPath: "uri" });
+      }
+      // A purely local "hang onto this" shelf, independent of Bluesky auth — the
+      // like/repost/bookmark exclusions above all require signing in, but
+      // CLAUDE.md requires the app stay fully usable signed out.
+      if (!db.objectStoreNames.contains("kept")) {
+        db.createObjectStore("kept", { keyPath: "uri" });
       }
 
       if (db.objectStoreNames.contains("excluded")) {
@@ -174,6 +181,8 @@ let likedSet: Set<string> | undefined;
 /** Subset of `excludedSet` excluded for a reason other than a like, so it can never be waived. */
 let nonWaivableSet: Set<string> | undefined;
 let seenSet: Set<string> | undefined;
+/** Locally kept posts. Never resurfaces regardless of "Allow repeats" or "Include liked". */
+let keptSet: Set<string> | undefined;
 
 interface Sets {
   excluded: Set<string>;
@@ -181,6 +190,7 @@ interface Sets {
   liked: Set<string>;
   nonWaivable: Set<string>;
   seen: Set<string>;
+  kept: Set<string>;
 }
 
 function pairKey(uri: string, reason: string): string {
@@ -211,13 +221,14 @@ function invalidateSets(): void {
 }
 
 async function loadSets(): Promise<Sets> {
-  if (excludedSet && excludedPairSet && likedSet && nonWaivableSet && seenSet) {
+  if (excludedSet && excludedPairSet && likedSet && nonWaivableSet && seenSet && keptSet) {
     return {
       excluded: excludedSet,
       pairs: excludedPairSet,
       liked: likedSet,
       nonWaivable: nonWaivableSet,
       seen: seenSet,
+      kept: keptSet,
     };
   }
   setsPromise ??= readSets().finally(() => {
@@ -229,12 +240,13 @@ async function loadSets(): Promise<Sets> {
 async function readSets(): Promise<Sets> {
   const epoch = setsEpoch;
   const db = await openDb();
-  const { transaction } = tx(db, ["excluded", "seen"], "readonly");
-  const [excluded, seenKeys] = await Promise.all([
+  const { transaction } = tx(db, ["excluded", "seen", "kept"], "readonly");
+  const [excluded, seenKeys, keptKeys] = await Promise.all([
     wrap(transaction.objectStore("excluded").getAll()) as Promise<
       Array<{ uri: string; reason: string }>
     >,
     wrap(transaction.objectStore("seen").getAllKeys()),
+    wrap(transaction.objectStore("kept").getAllKeys()),
   ]);
   const sets: Sets = {
     excluded: new Set(excluded.map((row) => row.uri)),
@@ -242,6 +254,7 @@ async function readSets(): Promise<Sets> {
     liked: new Set(excluded.filter((row) => row.reason === "like").map((row) => row.uri)),
     nonWaivable: new Set(excluded.filter((row) => row.reason !== "like").map((row) => row.uri)),
     seen: new Set(seenKeys as string[]),
+    kept: new Set(keptKeys as string[]),
   };
   // A wipe landed while this read was in flight, so its result describes a
   // database state that no longer exists. Hand it back to this caller but leave
@@ -252,6 +265,7 @@ async function readSets(): Promise<Sets> {
   likedSet = sets.liked;
   nonWaivableSet = sets.nonWaivable;
   seenSet = sets.seen;
+  keptSet = sets.kept;
   return sets;
 }
 
@@ -396,20 +410,26 @@ export async function insertPosts(rows: PostInsert[]): Promise<number> {
 
 export async function deletePosts(uris: string[]): Promise<void> {
   if (uris.length === 0) return;
-  const { seen } = await loadSets();
+  const { seen, kept } = await loadSets();
   const db = await openDb();
-  // Seen rows go with the posts. Leaving them behind inflated `seen` against a
-  // shrinking `posts`, so the "still unseen" figure drifted further from the
-  // truth every time a deleted post was cleaned up.
-  const { transaction, done } = tx(db, ["posts", "seen"], "readwrite");
+  // Seen and kept rows go with the posts. Leaving them behind inflated `seen`
+  // against a shrinking `posts`, so the "still unseen" figure drifted further
+  // from the truth every time a deleted post was cleaned up, and an orphaned
+  // kept row pointed at a post that no longer exists to hydrate.
+  const { transaction, done } = tx(db, ["posts", "seen", "kept"], "readwrite");
   const store = transaction.objectStore("posts");
   const seenStore = transaction.objectStore("seen");
+  const keptStore = transaction.objectStore("kept");
   for (const uri of uris) {
     store.delete(uri);
     seenStore.delete(uri);
+    keptStore.delete(uri);
   }
   await done;
-  for (const uri of uris) seen.delete(uri);
+  for (const uri of uris) {
+    seen.delete(uri);
+    kept.delete(uri);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -512,6 +532,59 @@ export async function resetSeen(): Promise<number> {
 }
 
 // ---------------------------------------------------------------------------
+// Kept posts
+//
+// A purely local "hang onto this" shelf. Unlike likes/reposts/bookmarks it
+// needs no Bluesky account, which is the only way a signed-out visitor can
+// hold onto a find instead of losing it the moment `markShown` fires.
+// ---------------------------------------------------------------------------
+
+export async function keepPost(uri: string): Promise<void> {
+  const { kept } = await loadSets();
+  const db = await openDb();
+  const { transaction, done } = tx(db, ["kept"], "readwrite");
+  transaction.objectStore("kept").put({ uri, keptAt: new Date().toISOString() });
+  await done;
+  kept.add(uri);
+}
+
+export async function unkeepPost(uri: string): Promise<void> {
+  const { kept } = await loadSets();
+  const db = await openDb();
+  const { transaction, done } = tx(db, ["kept"], "readwrite");
+  transaction.objectStore("kept").delete(uri);
+  await done;
+  kept.delete(uri);
+}
+
+/** Snapshot of currently-kept URIs, so cards can render their star as already-lit. */
+export async function keptUris(): Promise<Set<string>> {
+  const { kept } = await loadSets();
+  return kept;
+}
+
+/** Hydrated the same way `shuffle` hydrates its picks, newest-kept first. */
+export async function keptRows(): Promise<ShuffleRow[]> {
+  const db = await openDb();
+  const keptTx = tx(db, ["kept"], "readonly");
+  const keptEntries = (await wrap(keptTx.transaction.objectStore("kept").getAll())) as Array<{
+    uri: string;
+    keptAt: string;
+  }>;
+  keptEntries.sort((a, b) => (a.keptAt < b.keptAt ? 1 : -1));
+
+  const postTx = tx(db, ["posts"], "readonly");
+  const postStore = postTx.transaction.objectStore("posts");
+  // Every request issued before the first await, so this second transaction
+  // cannot auto-commit out from under a later lookup.
+  const rows = (await Promise.all(keptEntries.map((entry) => wrap(postStore.get(entry.uri))))).filter(
+    (row): row is PostRow => row !== undefined,
+  );
+
+  return hydrateRows(db, rows);
+}
+
+// ---------------------------------------------------------------------------
 // Selection
 // ---------------------------------------------------------------------------
 
@@ -537,8 +610,10 @@ const SCAN_LIMIT = 40_000;
 
 /**
  * A like exclusion can be waived by "Include Liked"; a repost or bookmark
- * exclusion cannot, even on a post that's also liked. Shared between
- * `shuffle` and `shuffleByAuthor` so the two selection paths can't diverge.
+ * exclusion cannot, even on a post that's also liked. A kept post is never
+ * waivable either — it's a deliberate hold, not incidental exclusion state.
+ * Shared between `shuffle` and `shuffleByAuthor` so the two selection paths
+ * can't diverge.
  */
 function isBlocked(
   uri: string,
@@ -546,7 +621,9 @@ function isBlocked(
   excluded: Set<string>,
   liked: Set<string>,
   nonWaivable: Set<string>,
+  kept: Set<string>,
 ): boolean {
+  if (kept.has(uri)) return true;
   return excluded.has(uri) && !(includeLiked && liked.has(uri) && !nonWaivable.has(uri));
 }
 
@@ -557,7 +634,7 @@ function isBlocked(
  * however picked-over the index gets.
  */
 export async function shuffle(options: ShuffleOptions): Promise<ShuffleRow[]> {
-  const { excluded, liked, nonWaivable, seen } = await loadSets();
+  const { excluded, liked, nonWaivable, seen, kept } = await loadSets();
   const cutoff = new Date(Date.now() - options.minAgeDays * 86_400_000).toISOString();
 
   const db = await openDb();
@@ -585,7 +662,7 @@ export async function shuffle(options: ShuffleOptions): Promise<ShuffleRow[]> {
         scanned += 1;
         const row = cursor.value as PostRow;
 
-        const blocked = isBlocked(row.uri, options.includeLiked, excluded, liked, nonWaivable);
+        const blocked = isBlocked(row.uri, options.includeLiked, excluded, liked, nonWaivable, kept);
 
         const ok =
           row.createdAt < cutoff &&
@@ -653,7 +730,7 @@ export async function shuffleByAuthor(
   authorDid: string,
   options: Omit<ShuffleOptions, "maxPerAuthor">,
 ): Promise<ShuffleRow[]> {
-  const { excluded, liked, nonWaivable, seen } = await loadSets();
+  const { excluded, liked, nonWaivable, seen, kept } = await loadSets();
   const cutoff = new Date(Date.now() - options.minAgeDays * 86_400_000).toISOString();
   const db = await openDb();
 
@@ -675,7 +752,7 @@ export async function shuffleByAuthor(
       }
       scanned += 1;
       const row = cursor.value as PostRow;
-      const blocked = isBlocked(row.uri, options.includeLiked, excluded, liked, nonWaivable);
+      const blocked = isBlocked(row.uri, options.includeLiked, excluded, liked, nonWaivable, kept);
       const ok = row.createdAt < cutoff && !blocked && (options.includeSeen || !seen.has(row.uri));
       if (ok) matches.push(row);
       cursor.continue();
@@ -691,7 +768,7 @@ export async function shuffleByAuthor(
 // ---------------------------------------------------------------------------
 
 export async function stats(): Promise<Stats> {
-  const { excluded, seen } = await loadSets();
+  const { excluded, seen, kept } = await loadSets();
   const db = await openDb();
   const { transaction } = tx(db, ["authors", "posts"], "readonly");
   const authorStore = transaction.objectStore("authors");
@@ -722,8 +799,24 @@ export async function stats(): Promise<Stats> {
     excluded: excluded.size,
     seen: seen.size,
     unseen: Math.max(0, posts - seen.size),
+    kept: kept.size,
     oldest: oldestKey,
   };
+}
+
+/** Post counts per author, for the account picker in the Index panel. */
+export async function authorPostCounts(): Promise<Map<string, number>> {
+  const db = await openDb();
+  const { transaction } = tx(db, ["authors", "posts"], "readonly");
+  const authors = (await wrap(transaction.objectStore("authors").getAll())) as AuthorRow[];
+  const index = transaction.objectStore("posts").index("by_author");
+  const counts = new Map<string, number>();
+  await Promise.all(
+    authors.map(async (author) => {
+      counts.set(author.did, await wrap(index.count(author.did)));
+    }),
+  );
+  return counts;
 }
 
 // ---------------------------------------------------------------------------
@@ -732,7 +825,7 @@ export async function stats(): Promise<Stats> {
 
 export async function resetAll(): Promise<void> {
   const db = await openDb();
-  const names = ["meta", "authors", "posts", "excluded", "seen"];
+  const names = ["meta", "authors", "posts", "excluded", "seen", "kept"];
   const { transaction, done } = tx(db, names, "readwrite");
   for (const name of names) transaction.objectStore(name).clear();
   await done;
@@ -741,6 +834,7 @@ export async function resetAll(): Promise<void> {
   likedSet = new Set();
   nonWaivableSet = new Set();
   seenSet = new Set();
+  keptSet = new Set();
   invalidateSets();
 }
 
@@ -954,7 +1048,7 @@ export async function importIndex(
     await done;
   }
 
-  // All five, so a future change to loadSets that refreshes them independently
+  // All six, so a future change to loadSets that refreshes them independently
   // cannot leave a stale subset behind. `setsPromise` too, or an in-flight read
   // started before the import would resolve into the post-import world.
   excludedSet = undefined;
@@ -962,6 +1056,7 @@ export async function importIndex(
   likedSet = undefined;
   nonWaivableSet = undefined;
   seenSet = undefined;
+  keptSet = undefined;
   invalidateSets();
 
   // Optional: an export from an older build, or a hand-trimmed one, may omit these.

@@ -37,12 +37,17 @@ import {
   type ViewImage,
 } from "./media.ts";
 import {
+  allAuthors,
+  authorPostCounts,
   deletePosts,
   estimateUsage,
   exportIndex,
   getMeta,
   importIndex,
   insertExclusions,
+  keepPost,
+  keptRows,
+  keptUris,
   markShown,
   removeExclusion,
   requestPersistence,
@@ -52,6 +57,7 @@ import {
   shuffle,
   shuffleByAuthor,
   stats,
+  unkeepPost,
   type IndexFile,
   type ShuffleRow,
   type Stats,
@@ -99,11 +105,19 @@ const ui = {
   results: el("results"),
   note: el("note"),
   settings: el<HTMLDialogElement>("settings"),
+  settingsTitle: el<HTMLHeadingElement>("settings-title"),
   statsList: el("stats"),
   deepen: el<HTMLButtonElement>("deepen"),
   refresh: el<HTMLButtonElement>("refresh"),
   depthNote: el("depth-note"),
   resetSeen: el<HTMLButtonElement>("reset-seen"),
+  authorSearch: el<HTMLInputElement>("author-search"),
+  authorList: el("author-list"),
+  viewKept: el<HTMLButtonElement>("view-kept"),
+  keptBanner: el("kept-banner"),
+  keptBannerCount: el("kept-banner-count"),
+  keptBannerPlural: el("kept-banner-plural"),
+  exitKept: el<HTMLButtonElement>("exit-kept"),
   exportBtn: el<HTMLButtonElement>("export"),
   importBtn: el<HTMLButtonElement>("import"),
   resetAll: el<HTMLButtonElement>("reset-all"),
@@ -140,6 +154,8 @@ interface ActionState {
   likeUri: string | null;
   repostUri: string | null;
   bookmarked: boolean;
+  /** Purely local — no Bluesky account needed, unlike the three above. */
+  kept: boolean;
 }
 
 /** Like/repost/bookmark state for what is on screen, keyed by post URI. */
@@ -236,6 +252,10 @@ function icon(paths: string, fillable = false): string {
 const ICONS = {
   like: icon("M12 20.8s-8-4.9-8-10.2A4.8 4.8 0 0 1 12 7.5a4.8 4.8 0 0 1 8 3.1c0 5.3-8 10.2-8 10.2z", true),
   mark: icon("M6.5 3.5h11a1 1 0 0 1 1 1v16L12 16.2 5.5 20.5v-16a1 1 0 0 1 1-1z", true),
+  keep: icon(
+    "M12 3.5l2.6 5.4 5.9.8-4.3 4.2 1 5.9-5.2-2.8-5.2 2.8 1-5.9-4.3-4.2 5.9-.8L12 3.5z",
+    true,
+  ),
   repost:
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" ` +
     `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
@@ -361,7 +381,7 @@ function singleTextLang(langs: string[] | undefined): string | null {
   return tag && /^[a-zA-Z]{2,3}(-[a-zA-Z0-9]+)*$/.test(tag) ? tag : null;
 }
 
-function toCard(post: PostView, row: ShuffleRow): Card {
+function toCard(post: PostView, row: ShuffleRow, kept: boolean): Card {
   // Refs are zipped into the images by record position, so each image carries
   // its own. `targets.refs` is then rebuilt from the *rendered* images, keeping
   // DOM indices and blob refs aligned even when an entry was unusable.
@@ -378,6 +398,7 @@ function toCard(post: PostView, row: ShuffleRow): Card {
     likeUri: post.viewer?.like ?? null,
     repostUri: post.viewer?.repost ?? null,
     bookmarked: post.viewer?.bookmarked ?? false,
+    kept,
   });
 
   return {
@@ -557,6 +578,19 @@ function mediaHtml(card: Card): string {
 }
 
 /**
+ * Unlike Like/Repost/Bookmark, "Keep" isn't an existing Bluesky gesture with a
+ * familiar meaning — a bare star gave no hint that pressing it does anything
+ * beyond decorate the button, let alone that it holds the post locally and
+ * stops it resurfacing. Spelling out the effect in the one place every
+ * visitor can see it, signed in or not, is what actually makes it discoverable.
+ */
+function keepLabel(kept: boolean): string {
+  return kept
+    ? "Kept — won't resurface while digging. Click to release it."
+    : "Keep — holds this locally so it won't resurface while digging.";
+}
+
+/**
  * Rendered whether or not anyone is signed in: clicking while signed out opens
  * the sign-in dialog, which is more discoverable than hiding the controls.
  */
@@ -574,15 +608,17 @@ function actionsHtml(card: Card): string {
     on: boolean,
     title: string,
     count?: number,
+    requiresAuth = true,
   ): string => {
-    const label = signedOut ? `Sign in to ${title.toLowerCase()}` : title;
+    const muted = requiresAuth && signedOut;
+    const label = muted ? `Sign in to ${title.toLowerCase()}` : title;
     return (
       `<button class="act ${kind}" data-act="${action}" data-uri="${uri}" ` +
       // Name-from-content wins over `title` for a button, and the SVG is
       // aria-hidden — so with a count present, the accessible name silently
       // became the number ("1.2K") instead of the button's purpose. aria-label
       // pins it explicitly; the count span is hidden from that computation.
-      `${signedOut ? 'data-signed-out="1" ' : ""}aria-pressed="${on}" aria-label="${escapeHtml(
+      `${muted ? 'data-signed-out="1" ' : ""}aria-pressed="${on}" aria-label="${escapeHtml(
         label,
       )}" title="${escapeHtml(label)}">${glyph}` +
       `${count ? `<span class="count" aria-hidden="true">${formatCount(count)}</span>` : ""}</button>`
@@ -603,10 +639,13 @@ function actionsHtml(card: Card): string {
         }</span></button>`
       : "";
 
+  const keptNow = state?.kept === true;
+
   return `<div class="acts">
     ${act("like", "like", ICONS.like, state?.likeUri != null, "Like", card.likeCount)}
     ${act("repost", "repost", ICONS.repost, state?.repostUri != null, "Repost", card.repostCount)}
     ${act("mark", "bookmark", ICONS.mark, state?.bookmarked === true, "Bookmark")}
+    ${act("keep", "keep", ICONS.keep, keptNow, keepLabel(keptNow), undefined, false)}
     ${downloadAll}
     <a class="act open" href="${escapeHtml(card.webUrl)}" target="_blank" rel="noreferrer"
        aria-label="Open on Bluesky" title="Open on Bluesky">${ICONS.open}</a>
@@ -698,10 +737,21 @@ let digGeneration = 0;
 /** When set, `dig()` scopes selection to one author instead of the whole index. */
 let digFilter: { did: string; handle: string } | undefined;
 
+/**
+ * True while `#results` holds the kept list rather than a page of finds — set
+ * by `showKeptPage()`, cleared the moment `dig()` runs again for any reason
+ * (the Dig button, a filter change, digging one author, or the Index panel's
+ * own "Back to digging" exit).
+ */
+let viewingKept = false;
+
 function setDigFilter(filter: { did: string; handle: string } | undefined): void {
   digFilter = filter;
   ui.diggingAs.hidden = !filter;
   ui.diggingHandle.textContent = filter ? `@${filter.handle}` : "";
+  // So a chosen author filter survives a reload instead of silently reverting
+  // to global digging the next time this page opens.
+  void setMeta("dig_filter", filter ? JSON.stringify(filter) : "");
 }
 
 /**
@@ -714,6 +764,13 @@ function setDigFilter(filter: { did: string; handle: string } | undefined): void
 async function dig(afterMessageHtml?: string): Promise<void> {
   const generation = ++digGeneration;
   const superseded = (): boolean => generation !== digGeneration;
+
+  // Every path back to normal digging — the Dig button, an age/toggle change,
+  // digging one author, or the kept-page's own "Back to digging" — runs
+  // through here, so this is the one place that needs to know the kept page
+  // is going away.
+  viewingKept = false;
+  ui.keptBanner.hidden = true;
 
   // Three characters, exactly as wide as "Dig" in a monospace face. "Digging" was
   // 34px wider, and with the mark now in the header there is not enough slack for
@@ -750,6 +807,7 @@ async function dig(afterMessageHtml?: string): Promise<void> {
       rows.map((row) => row.uri),
       isSignedIn() ? authedTransport : undefined,
     );
+    const kept = await keptUris();
 
     // Anything the AppView no longer knows about has been deleted upstream.
     const returned = new Set(hydrated.map((post) => post.uri));
@@ -773,7 +831,7 @@ async function dig(afterMessageHtml?: string): Promise<void> {
     for (const post of hydrated) {
       const row = byUri.get(post.uri);
       if (!row) continue;
-      const card = toCard(post, row);
+      const card = toCard(post, row, kept.has(post.uri));
       if (card.images.length === 0) unrenderable.push(post.uri);
       // "Hide" removes a labelled post from the page entirely rather than
       // rendering a blurred placeholder for it — treated the same as an
@@ -944,7 +1002,8 @@ async function applyAction(button: HTMLButtonElement): Promise<void> {
   const uri = button.dataset.uri;
   if (!act || !uri) return;
 
-  if (!isSignedIn()) {
+  // Keeping is purely local — no Bluesky account needed, unlike the gestures below.
+  if (act !== "keep" && !isSignedIn()) {
     openAuth();
     return;
   }
@@ -988,6 +1047,43 @@ async function applyAction(button: HTMLButtonElement): Promise<void> {
         await insertExclusions([{ uri, reason: "bookmark" }]);
       }
       button.setAttribute("aria-pressed", String(state.bookmarked));
+    } else if (act === "keep") {
+      if (state.kept) {
+        await unkeepPost(uri);
+        state.kept = false;
+      } else {
+        await keepPost(uri);
+        state.kept = true;
+      }
+      button.setAttribute("aria-pressed", String(state.kept));
+      // The title set at render time goes stale the moment this toggles — left
+      // alone, a second click would show "Keep" again with no acknowledgement
+      // the first one did anything.
+      const label = keepLabel(state.kept);
+      button.setAttribute("aria-label", label);
+      button.title = label;
+      // A tooltip never shows on a tap, so this is the only feedback a touch
+      // user gets that the star did something beyond change color — and that
+      // what it did was hold the post locally, not send it anywhere. Skipped
+      // while viewing the kept list itself, where that's already the context.
+      if (state.kept && !viewingKept) {
+        ui.note.innerHTML =
+          `<strong>Kept.</strong> It stays on this device and won't resurface while ` +
+          `digging &mdash; see it again from the Index panel's Kept posts list.`;
+      }
+      // Unkeeping while browsing the kept list removes the card from the page
+      // immediately, rather than leaving a stale one whose star is off, and
+      // keeps the banner's count in step.
+      if (!state.kept && viewingKept) {
+        button.closest("article.find")?.remove();
+        const remaining = ui.results.querySelectorAll("article.find").length;
+        updateKeptBanner(remaining);
+        void refreshStats();
+        if (remaining === 0) {
+          ui.results.innerHTML = "";
+          ui.note.innerHTML = `<strong>Nothing kept left.</strong> Every starred find has been released.`;
+        }
+      }
     }
   } catch (err) {
     // The glyph and count stay put; failure shows as the red state. `#note`
@@ -1256,7 +1352,8 @@ ui.lbDownload.addEventListener("click", async () => {
   }
 });
 
-ui.results.addEventListener("click", (event) => {
+/** Shared by `#results` and the Index panel's kept-post list — both render `cardHtml()` output. */
+function handleCardClick(event: MouseEvent): void {
   const node = event.target;
   // Element, not HTMLElement: every button in here contains an inline SVG, and a
   // click landing on the glyph makes the target an SVGPathElement. Narrowing to
@@ -1308,7 +1405,9 @@ ui.results.addEventListener("click", (event) => {
   }
   const act = node.closest<HTMLButtonElement>("button.act");
   if (act) void applyAction(act);
-});
+}
+
+ui.results.addEventListener("click", handleCardClick);
 
 ui.clearDigFilter.addEventListener("click", () => {
   setDigFilter(undefined);
@@ -1635,6 +1734,7 @@ async function refreshStats(): Promise<void> {
     ["Excluded posts", s.excluded.toLocaleString()],
     ["Already surfaced", s.seen.toLocaleString()],
     ["Still unseen", s.unseen.toLocaleString()],
+    ["Kept", s.kept.toLocaleString()],
     ["Oldest post", s.oldest ? s.oldest.slice(0, 10) : "none yet", true],
   ];
   if (usage) {
@@ -1667,11 +1767,172 @@ async function refreshStats(): Promise<void> {
   ui.deepen.disabled = pending === 0 || crawlController !== undefined;
 }
 
+// ---------------------------------------------------------------------------
+// Kept-post list
+//
+// Renders full-page through `#results`, the same element and the same
+// `cardHtml()` a normal dig uses — a cramped scroll box wedged inside the
+// Index dialog gave the gauge no room to mean anything and made every card
+// feel like an afterthought next to the real page of finds.
+// ---------------------------------------------------------------------------
+
+function updateKeptBanner(count: number): void {
+  ui.keptBannerCount.textContent = count.toLocaleString();
+  ui.keptBannerPlural.hidden = count === 1;
+}
+
+async function showKeptPage(): Promise<void> {
+  const generation = ++digGeneration;
+  const superseded = (): boolean => generation !== digGeneration;
+
+  ui.settings.close();
+  viewingKept = true;
+  ui.keptBanner.hidden = false;
+  ui.note.textContent = "";
+  ui.results.innerHTML = `<p class="note">Loading kept posts&hellip;</p>`;
+
+  try {
+    const rows = await keptRows();
+    if (superseded()) return;
+
+    if (rows.length === 0) {
+      targets.clear();
+      actions.clear();
+      videos.clear();
+      galleries.clear();
+      releaseObjectUrls();
+      ui.results.innerHTML = "";
+      updateKeptBanner(0);
+      ui.note.innerHTML = `<strong>Nothing kept yet.</strong> The star on any find keeps it here, regardless of sign-in.`;
+      return;
+    }
+
+    const hydrated = await getPosts(
+      rows.map((row) => row.uri),
+      isSignedIn() ? authedTransport : undefined,
+    );
+    if (superseded()) return;
+
+    const byUri = new Map(rows.map((row) => [row.uri, row]));
+    targets.clear();
+    actions.clear();
+    videos.clear();
+    galleries.clear();
+    releaseObjectUrls();
+    const cards = hydrated
+      .map((post) => {
+        const row = byUri.get(post.uri);
+        return row ? toCard(post, row, true) : null;
+      })
+      .filter((card): card is Card => card !== null);
+
+    updateKeptBanner(cards.length);
+    ui.results.innerHTML =
+      cards.length > 0
+        ? cards.map(cardHtml).join("")
+        : `<p class="note">Nothing kept could be loaded — it may have been deleted upstream.</p>`;
+    ui.results.focus();
+    scrollToTop();
+  } catch (err) {
+    if (superseded()) return;
+    ui.results.innerHTML = "";
+    ui.note.innerHTML = `<strong>Could not load kept posts.</strong> ${escapeHtml(
+      err instanceof Error ? err.message : String(err),
+    )}`;
+  }
+}
+
+ui.viewKept.addEventListener("click", () => void showKeptPage());
+
+ui.exitKept.addEventListener("click", () => void dig());
+
+// ---------------------------------------------------------------------------
+// Author picker
+// ---------------------------------------------------------------------------
+
+interface AuthorListRow {
+  did: string;
+  handle: string;
+  oldest: string | null;
+  newest: string | null;
+  count: number;
+}
+
+let authorRows: AuthorListRow[] = [];
+
+function renderAuthorList(filter: string): void {
+  const q = filter.trim().toLowerCase();
+  const matches = q ? authorRows.filter((a) => a.handle.toLowerCase().includes(q)) : authorRows;
+  if (matches.length === 0) {
+    ui.authorList.innerHTML = `<p class="caption">No followed accounts match &ldquo;${escapeHtml(
+      filter,
+    )}&rdquo;.</p>`;
+    return;
+  }
+  ui.authorList.innerHTML = matches
+    .map((a) => {
+      const range = a.oldest && a.newest ? `${formatDate(a.oldest)}–${formatDate(a.newest)}` : "not indexed yet";
+      return `<button type="button" class="author-row" data-author-did="${escapeHtml(
+        a.did,
+      )}" data-author-handle="${escapeHtml(a.handle)}">
+        <span class="author-handle">@${escapeHtml(a.handle)}</span>
+        <span class="author-meta">${a.count.toLocaleString()} posts · ${escapeHtml(range)}</span>
+      </button>`;
+    })
+    .join("");
+}
+
+/** Reloaded on every settings open, since a crawl can add authors or posts between visits. */
+async function loadAuthorList(): Promise<void> {
+  const [authors, counts] = await Promise.all([allAuthors(), authorPostCounts()]);
+  authorRows = authors
+    .map((a) => ({
+      did: a.did,
+      handle: a.handle,
+      oldest: a.oldest,
+      newest: a.newest,
+      count: counts.get(a.did) ?? 0,
+    }))
+    .sort((a, b) => a.handle.localeCompare(b.handle));
+  renderAuthorList(ui.authorSearch.value);
+}
+
+ui.authorSearch.addEventListener("input", () => renderAuthorList(ui.authorSearch.value));
+
+ui.authorList.addEventListener("click", (event) => {
+  const node = event.target;
+  if (!(node instanceof Element)) return;
+  const row = node.closest<HTMLButtonElement>("button[data-author-did]");
+  if (!row) return;
+  const did = row.dataset.authorDid;
+  const handle = row.dataset.authorHandle;
+  if (!did || !handle) return;
+  ui.settings.close();
+  setDigFilter({ did, handle });
+  void dig();
+});
+
 ui.openSettings.addEventListener("click", () => {
-  void refreshStats().then(() => ui.settings.showModal());
+  void Promise.all([refreshStats(), loadAuthorList()]).then(() => {
+    ui.settings.showModal();
+    // `showModal()` auto-focuses the first focusable control (the Sensitive
+    // content select), which paints a distracting ring nobody asked for on
+    // every single open. Moving focus to the heading instead still gives
+    // screen readers a "the dialog opened, here's its title" announcement,
+    // and a real Tab press still reaches every control from here — the ring
+    // that a keyboard user earns by pressing Tab is untouched.
+    ui.settingsTitle.focus();
+  });
 });
 
 ui.closeSettings.addEventListener("click", () => ui.settings.close());
+
+// Standard <dialog> trick: a click that lands on the dialog element itself
+// (rather than a descendant) means it hit the backdrop area, since the
+// dialog's box is sized to its content.
+ui.settings.addEventListener("click", (event) => {
+  if (event.target === ui.settings) ui.settings.close();
+});
 
 ui.labelPolicy.addEventListener("change", () => {
   applyLabelPolicy(ui.labelPolicy.value);
@@ -1707,6 +1968,8 @@ ui.resetAll.addEventListener("click", async () => {
   if (!ok) return;
   await resetAll();
   setDigFilter(undefined);
+  viewingKept = false;
+  ui.keptBanner.hidden = true;
   ui.settings.close();
   ui.results.innerHTML = "";
   ui.note.textContent = "";
@@ -1860,6 +2123,21 @@ async function boot(): Promise<void> {
 
   applyLabelPolicy(await getMeta("label_policy"));
   ui.labelPolicy.value = labelPolicy;
+
+  // Restores a chosen author filter across a reload, rather than silently
+  // reverting to global digging every time this page opens.
+  const savedFilter = await getMeta("dig_filter");
+  if (savedFilter) {
+    try {
+      const parsed = JSON.parse(savedFilter) as { did?: unknown; handle?: unknown };
+      if (typeof parsed.did === "string" && typeof parsed.handle === "string") {
+        setDigFilter({ did: parsed.did, handle: parsed.handle });
+      }
+    } catch {
+      // Malformed value from an older build or a hand-edited export — ignored,
+      // not fatal, since digging just falls back to the whole index.
+    }
+  }
 
   // Runs before the first dig so hydration can carry viewer state, and because a
   // redirect callback has to be consumed out of the URL early.
