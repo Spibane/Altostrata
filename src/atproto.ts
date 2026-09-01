@@ -303,6 +303,34 @@ export async function listRecordsDescending(
   return { records, highestRkey };
 }
 
+/**
+ * One page of a collection, newest-first, for browsing rather than syncing.
+ * `listRecordsDescending` walks a whole collection to build the exclusion set —
+ * an account with fifty thousand likes makes that the wrong shape for a reader
+ * who wants to look at the most recent ones, so this hands back the cursor and
+ * lets the caller stop.
+ */
+export async function listRecordsPage(
+  pds: string,
+  repo: string,
+  collection: string,
+  cursor?: string,
+  limit = 100,
+  signal?: AbortSignal,
+): Promise<{ records: RepoRecord[]; cursor?: string }> {
+  const data = (await getJson(
+    query(pds, "com.atproto.repo.listRecords", {
+      repo,
+      collection,
+      limit,
+      reverse: "false",
+      cursor,
+    }),
+    signal,
+  )) as { records?: RepoRecord[]; cursor?: string };
+  return { records: data.records ?? [], cursor: data.cursor };
+}
+
 // ---------------------------------------------------------------------------
 // Author feeds
 // ---------------------------------------------------------------------------

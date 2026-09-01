@@ -1,5 +1,25 @@
 # Changelog
 
+### v2.9.0 - 2026-08-31
+
+- **See what a dug account has liked.** The "Digging @handle" row gains a
+  **Their likes** button that pages through that account's own
+  `app.bsky.feed.like` records, read publicly from their PDS, and renders the
+  media posts among them as ordinary full-page cards — likes, stars, downloads
+  and the lightbox all work as usual. Liked posts that happen to be in the
+  local index keep their depth gauge; the rest, by accounts you don't follow,
+  render without one. **More** walks further back, and the note says how many
+  liked posts had no media to draw
+- **Moved to `altostrata.spibane.com`.** `public/CNAME` records the custom
+  domain, and `client-metadata.json` is repointed at the new origin — since
+  `client_id` is the OAuth client's identity, this is a new client as far as
+  every authorization server is concerned, so anyone signed in has to sign in
+  again. IndexedDB is per-origin too: the local index, kept shelf and seen
+  state do not follow the redirect, and have to travel by Export/Import
+- Fixed starring a post the index has never held — now reachable from the likes
+  browser — dropping it from the Kept posts list, which joined every kept URI
+  against the local `posts` store and silently discarded the misses
+
 ### v2.8.0 - 2026-07-29
 
 - **A local "kept" shelf.** Every find gets a star, alongside like/repost/

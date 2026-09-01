@@ -563,8 +563,25 @@ export async function keptUris(): Promise<Set<string>> {
   return kept;
 }
 
-/** Hydrated the same way `shuffle` hydrates its picks, newest-kept first. */
-export async function keptRows(): Promise<ShuffleRow[]> {
+/**
+ * Enough of a row to draw a card. Kept posts are not always indexed ones: the
+ * likes browser surfaces posts by accounts you don't follow, and starring one
+ * of those used to drop it from this list entirely — the join against `posts`
+ * found nothing and filtered it out, so the star silently did nothing.
+ */
+export interface KeptRow {
+  uri: string;
+  createdAt: string;
+  authorOldest: string | null;
+  authorNewest: string | null;
+}
+
+/**
+ * Newest-kept first. Indexed posts are hydrated exactly the way `shuffle`
+ * hydrates its picks, so they keep their depth gauge; the rest fall back to the
+ * date they were kept, which the hydrated post's own `createdAt` then replaces.
+ */
+export async function keptRows(): Promise<KeptRow[]> {
   const db = await openDb();
   const keptTx = tx(db, ["kept"], "readonly");
   const keptEntries = (await wrap(keptTx.transaction.objectStore("kept").getAll())) as Array<{
@@ -577,11 +594,40 @@ export async function keptRows(): Promise<ShuffleRow[]> {
   const postStore = postTx.transaction.objectStore("posts");
   // Every request issued before the first await, so this second transaction
   // cannot auto-commit out from under a later lookup.
-  const rows = (await Promise.all(keptEntries.map((entry) => wrap(postStore.get(entry.uri))))).filter(
+  const found = (await Promise.all(keptEntries.map((entry) => wrap(postStore.get(entry.uri))))).filter(
     (row): row is PostRow => row !== undefined,
   );
+  const hydrated = new Map((await hydrateRows(db, found)).map((row) => [row.uri, row]));
 
-  return hydrateRows(db, rows);
+  return keptEntries.map(
+    (entry): KeptRow =>
+      hydrated.get(entry.uri) ?? {
+        uri: entry.uri,
+        createdAt: entry.keptAt,
+        authorOldest: null,
+        authorNewest: null,
+      },
+  );
+}
+
+/**
+ * Rows for whichever of `uris` the index already holds, keyed by URI. Used by
+ * the likes browser, where the subjects come from someone else's repo rather
+ * than from a scan of the index: the ones that are indexed get a real depth
+ * gauge, the rest render without one instead of being dropped.
+ */
+export async function rowsForUris(uris: string[]): Promise<Map<string, ShuffleRow>> {
+  if (uris.length === 0) return new Map();
+  const db = await openDb();
+  const postTx = tx(db, ["posts"], "readonly");
+  const postStore = postTx.transaction.objectStore("posts");
+  // Every request issued before the first await, as in `keptRows`, so the
+  // transaction cannot auto-commit part-way through the lookups.
+  const rows = (await Promise.all(uris.map((uri) => wrap(postStore.get(uri))))).filter(
+    (row): row is PostRow => row !== undefined,
+  );
+  const hydrated = await hydrateRows(db, rows);
+  return new Map(hydrated.map((row) => [row.uri, row]));
 }
 
 // ---------------------------------------------------------------------------

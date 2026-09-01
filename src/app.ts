@@ -2,7 +2,9 @@ import {
   AbortedError,
   fetchBlob,
   getPosts,
+  listRecordsPage,
   resolveHandle,
+  resolvePds,
   type Label,
   type PostView,
 } from "./atproto.ts";
@@ -53,6 +55,7 @@ import {
   requestPersistence,
   resetAll,
   resetSeen,
+  rowsForUris,
   setMeta,
   shuffle,
   shuffleByAuthor,
@@ -88,6 +91,12 @@ const ui = {
   diggingAs: el("digging-as"),
   diggingHandle: el("digging-handle"),
   clearDigFilter: el<HTMLButtonElement>("clear-dig-filter"),
+  viewLikes: el<HTMLButtonElement>("view-likes"),
+  likesBanner: el("likes-banner"),
+  likesBannerHandle: el("likes-banner-handle"),
+  likesBannerCount: el("likes-banner-count"),
+  likesMore: el<HTMLButtonElement>("likes-more"),
+  exitLikes: el<HTMLButtonElement>("exit-likes"),
   openSettings: el<HTMLButtonElement>("open-settings"),
   labelPolicy: el<HTMLSelectElement>("label-policy"),
   progress: el("progress"),
@@ -322,8 +331,16 @@ interface Card {
   isQuote: boolean;
 }
 
+/**
+ * The only fields a card needs off an indexed row. Spelled out as its own type
+ * because the likes browser renders posts from repos the index has never seen —
+ * those get a synthesised row with no author range, and so no depth gauge,
+ * rather than being dropped for lack of one.
+ */
+type CardRow = Pick<ShuffleRow, "createdAt" | "authorOldest" | "authorNewest">;
+
 /** Position of this post within the author's indexed history, 0 = oldest. */
-function depthOf(row: ShuffleRow): number | null {
+function depthOf(row: CardRow): number | null {
   if (!row.authorOldest || !row.authorNewest) return null;
   const oldest = Date.parse(row.authorOldest);
   const newest = Date.parse(row.authorNewest);
@@ -381,7 +398,7 @@ function singleTextLang(langs: string[] | undefined): string | null {
   return tag && /^[a-zA-Z]{2,3}(-[a-zA-Z0-9]+)*$/.test(tag) ? tag : null;
 }
 
-function toCard(post: PostView, row: ShuffleRow, kept: boolean): Card {
+function toCard(post: PostView, row: CardRow, kept: boolean): Card {
   // Refs are zipped into the images by record position, so each image carries
   // its own. `targets.refs` is then rebuilt from the *rendered* images, keeping
   // DOM indices and blob refs aligned even when an entry was unusable.
@@ -745,6 +762,19 @@ let digFilter: { did: string; handle: string } | undefined;
  */
 let viewingKept = false;
 
+/**
+ * The two full-page alternatives to a page of finds — the kept list and an
+ * account's likes — always go away together, since both occupy `#results` and
+ * only one banner can honestly describe what is on screen.
+ */
+function hidePageBanners(): void {
+  viewingKept = false;
+  ui.keptBanner.hidden = true;
+  likesView = undefined;
+  ui.likesBanner.hidden = true;
+  ui.likesMore.hidden = true;
+}
+
 function setDigFilter(filter: { did: string; handle: string } | undefined): void {
   digFilter = filter;
   ui.diggingAs.hidden = !filter;
@@ -769,8 +799,7 @@ async function dig(afterMessageHtml?: string): Promise<void> {
   // digging one author, or the kept-page's own "Back to digging" — runs
   // through here, so this is the one place that needs to know the kept page
   // is going away.
-  viewingKept = false;
-  ui.keptBanner.hidden = true;
+  hidePageBanners();
 
   // Three characters, exactly as wide as "Dig" in a monospace face. "Digging" was
   // 34px wider, and with the mark now in the header there is not enough slack for
@@ -1786,6 +1815,7 @@ async function showKeptPage(): Promise<void> {
   const superseded = (): boolean => generation !== digGeneration;
 
   ui.settings.close();
+  hidePageBanners();
   viewingKept = true;
   ui.keptBanner.hidden = false;
   ui.note.textContent = "";
@@ -1845,6 +1875,215 @@ async function showKeptPage(): Promise<void> {
 ui.viewKept.addEventListener("click", () => void showKeptPage());
 
 ui.exitKept.addEventListener("click", () => void dig());
+
+// ---------------------------------------------------------------------------
+// Likes browser
+//
+// What one of the accounts you follow has liked, rendered full-page through
+// `#results` with the same `cardHtml()` a dig uses. Reading it needs no account
+// of your own: `app.bsky.feed.like` is a public collection in that account's
+// repo — the same one the crawl already reads from the owner's to build
+// exclusions — so this walks it a page at a time straight from their PDS.
+// ---------------------------------------------------------------------------
+
+const LIKE_COLLECTION = "app.bsky.feed.like";
+
+/**
+ * Record pages read per press. A page is 100 likes and most of them are not
+ * media posts, so one page routinely yields nothing renderable; six bounds the
+ * requests a single press can make while still usually filling a page of cards.
+ */
+const LIKE_PAGE_BUDGET = 6;
+
+interface LikesView {
+  did: string;
+  handle: string;
+  /** Resolved once and kept, so "More" doesn't re-walk the DID document. */
+  pds: string;
+  cursor?: string;
+  /** Already rendered, so a repeat press cannot draw the same card twice. */
+  shown: Set<string>;
+  /** Liked posts with nothing to draw — no media, deleted, or hidden by label. */
+  skipped: number;
+  exhausted: boolean;
+}
+
+/** Set while `#results` holds a likes page; cleared by `hidePageBanners()`. */
+let likesView: LikesView | undefined;
+
+function updateLikesBanner(view: LikesView): void {
+  ui.likesBannerHandle.textContent = `@${view.handle}`;
+  ui.likesBannerCount.textContent =
+    view.shown.size > 0
+      ? ` · ${view.shown.size.toLocaleString()} post${view.shown.size === 1 ? "" : "s"} with media`
+      : "";
+  ui.likesMore.hidden = view.exhausted;
+}
+
+/**
+ * `target` starts a fresh page for that account; omitting it appends the next
+ * batch to the one already on screen. Numbered off `digGeneration` like a dig,
+ * so pressing Dig (or More twice) cannot let an older load finish on top of a
+ * newer one.
+ */
+async function showLikesPage(target?: { did: string; handle: string }): Promise<void> {
+  const fresh = target !== undefined;
+  const view: LikesView | undefined = target
+    ? { did: target.did, handle: target.handle, pds: "", shown: new Set(), skipped: 0, exhausted: false }
+    : likesView;
+  if (!view) return;
+
+  const generation = ++digGeneration;
+  const superseded = (): boolean => generation !== digGeneration;
+
+  viewingKept = false;
+  ui.keptBanner.hidden = true;
+  likesView = view;
+  ui.likesBanner.hidden = false;
+  ui.likesMore.hidden = true;
+  ui.likesMore.disabled = true;
+  ui.note.textContent = "";
+  updateLikesBanner(view);
+
+  if (fresh) {
+    // Cleared here rather than after the cards are built: `toCard` populates
+    // these maps as it goes, so a clear on the far side of the fetch would wipe
+    // the very state the new cards need. The old cards leave the DOM in the
+    // same breath, so nothing on screen outlives its state.
+    targets.clear();
+    actions.clear();
+    videos.clear();
+    galleries.clear();
+    releaseObjectUrls();
+    ui.results.innerHTML = `<p class="note">Loading likes&hellip;</p>`;
+  }
+
+  const alreadyRendered = fresh ? 0 : ui.results.querySelectorAll("article.find").length;
+
+  try {
+    if (!view.pds) view.pds = await resolvePds(view.did);
+    if (superseded()) return;
+
+    const kept = await keptUris();
+    const cards: Card[] = [];
+    let pagesRead = 0;
+
+    while (cards.length < PAGE_SIZE && !view.exhausted && pagesRead < LIKE_PAGE_BUDGET) {
+      const page = await listRecordsPage(view.pds, view.did, LIKE_COLLECTION, view.cursor);
+      if (superseded()) return;
+      pagesRead += 1;
+      view.cursor = page.cursor;
+      if (!page.cursor || page.records.length === 0) view.exhausted = true;
+
+      // A like's subject is a strong ref to a post; anything else in there is
+      // not something this app can render, and a subject already on screen
+      // would draw a duplicate card.
+      const uris = [
+        ...new Set(
+          page.records
+            .map((record) => record.value.subject?.uri)
+            .filter(
+              (uri): uri is string =>
+                typeof uri === "string" &&
+                uri.includes("/app.bsky.feed.post/") &&
+                !view.shown.has(uri),
+            ),
+        ),
+      ];
+      if (uris.length === 0) continue;
+
+      const hydrated = await getPosts(uris, isSignedIn() ? authedTransport : undefined);
+      if (superseded()) return;
+      // Liked posts are mostly by people you don't follow, so most of these are
+      // not in the index at all. The ones that are get a real depth gauge.
+      const rows = await rowsForUris(hydrated.map((post) => post.uri));
+      if (superseded()) return;
+
+      // Anything the AppView no longer returns has been deleted upstream. Not
+      // deleted from the index here, unlike a dig: these URIs mostly aren't in
+      // it, and a like page is a read-only view of someone else's repo.
+      view.skipped += uris.length - hydrated.length;
+
+      for (const post of hydrated) {
+        if (view.shown.has(post.uri)) continue;
+        const createdAt = post.record?.createdAt;
+        // Every date on the card comes from this one field, and there is no
+        // indexed row to fall back on for a post the crawl never saw.
+        if (!createdAt) {
+          view.skipped += 1;
+          continue;
+        }
+        const row = rows.get(post.uri) ?? { createdAt, authorOldest: null, authorNewest: null };
+        const card = toCard(post, row, kept.has(post.uri));
+        if (card.images.length === 0 || (card.labels.length > 0 && labelPolicy === "hide")) {
+          view.skipped += 1;
+          continue;
+        }
+        view.shown.add(post.uri);
+        cards.push(card);
+      }
+    }
+
+    if (superseded()) return;
+
+    const html = cards.map(cardHtml).join("");
+    if (fresh) {
+      ui.results.innerHTML = html;
+      ui.results.focus();
+      scrollToTop();
+    } else if (html) {
+      ui.results.insertAdjacentHTML("beforeend", html);
+      // Lands the reader on the first of the newly-appended cards rather than
+      // leaving them at the More button with the new page below the fold.
+      const behavior = matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+      ui.results.querySelectorAll("article.find")[alreadyRendered]?.scrollIntoView({ behavior, block: "start" });
+    }
+
+    updateLikesBanner(view);
+
+    if (view.shown.size === 0) {
+      ui.results.innerHTML = "";
+      ui.note.innerHTML =
+        `<strong>Nothing with media in @${escapeHtml(view.handle)}'s likes.</strong> ` +
+        (view.exhausted
+          ? `Their likes are all text posts, or point at posts that have since been deleted.`
+          : `Nothing in the ${view.skipped.toLocaleString()} most recent could be drawn — press More to keep looking.`);
+      return;
+    }
+
+    // The skipped count is the honest answer to "why did that only add three
+    // cards" — the likes are there, they just aren't media posts.
+    if (cards.length === 0) {
+      ui.note.innerHTML = view.exhausted
+        ? `<strong>That's all of @${escapeHtml(view.handle)}'s likes.</strong>`
+        : `<strong>Nothing new with media in that batch.</strong> Press More to keep looking.`;
+    } else if (view.skipped > 0) {
+      ui.note.innerHTML =
+        `Showing the media posts @${escapeHtml(view.handle)} has liked. ` +
+        `${view.skipped.toLocaleString()} liked post${view.skipped === 1 ? "" : "s"} had no media to draw.`;
+    }
+  } catch (err) {
+    if (superseded()) return;
+    if (fresh) ui.results.innerHTML = "";
+    ui.note.innerHTML = `<strong>Could not load @${escapeHtml(view.handle)}'s likes.</strong> ${escapeHtml(
+      err instanceof Error ? err.message : String(err),
+    )}`;
+  } finally {
+    if (!superseded()) ui.likesMore.disabled = false;
+  }
+}
+
+ui.viewLikes.addEventListener("click", () => {
+  // The button only exists inside the "Digging @handle" row, so there is always
+  // a filtered account to read — but a stale click after it cleared would
+  // otherwise read an undefined repo.
+  if (!digFilter) return;
+  void showLikesPage(digFilter);
+});
+
+ui.likesMore.addEventListener("click", () => void showLikesPage());
+
+ui.exitLikes.addEventListener("click", () => void dig());
 
 // ---------------------------------------------------------------------------
 // Author picker
@@ -1968,8 +2207,7 @@ ui.resetAll.addEventListener("click", async () => {
   if (!ok) return;
   await resetAll();
   setDigFilter(undefined);
-  viewingKept = false;
-  ui.keptBanner.hidden = true;
+  hidePageBanners();
   ui.settings.close();
   ui.results.innerHTML = "";
   ui.note.textContent = "";

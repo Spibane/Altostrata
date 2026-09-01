@@ -1180,10 +1180,11 @@ button.author-row:hover { background: var(--raised); }
 .author-handle { font-size: 12.5px; color: var(--text); }
 .author-meta { font-size: 11px; color: var(--faint); }
 
-/* Stands in for the normal controls row while browsing the kept list — same
-   width and position as the pages of finds it replaces, since kept posts
-   render through the exact same `cardHtml()` as a normal dig. */
-.kept-banner {
+/* Stands in for the normal controls row while browsing the kept list or an
+   account's likes — same width and position as the pages of finds it replaces,
+   since both render through the exact same `cardHtml()` as a normal dig. */
+.kept-banner,
+.likes-banner {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1195,7 +1196,12 @@ button.author-row:hover { background: var(--raised); }
   color: var(--dim);
 }
 
-.kept-banner strong { color: var(--text); font-weight: 500; }
+.kept-banner strong,
+.likes-banner strong { color: var(--text); font-weight: 500; }
+
+/* Two buttons where the kept banner has one, so they need a group of their own
+   to stay together at the right-hand end of the row. */
+.likes-banner .banner-actions { display: flex; gap: 8px; flex-shrink: 0; }
 
 .danger { color: #ff8a6a; border-color: color-mix(in srgb, #ff8a6a 40%, transparent); }
 .danger:hover:not(:disabled) { color: #ffa48a; }
@@ -1394,6 +1400,10 @@ button.author-row:hover { background: var(--raised); }
        free, with nothing extra to keep in sync. -->
   <div class="sub-bar digging-as" id="digging-as" hidden>
     <span>Digging <strong id="digging-handle"></strong></span>
+    <!-- Reading someone else's likes needs no account: `app.bsky.feed.like` is a
+         public record in their repo, the same collection the crawl already reads
+         from the owner's. -->
+    <button class="ghost" id="view-likes" title="Browse the posts this account has liked">Their likes</button>
     <button class="ghost" id="clear-dig-filter" title="Stop digging just this account">Clear</button>
   </div>
   <div class="progress" id="progress" hidden>
@@ -1450,6 +1460,16 @@ button.author-row:hover { background: var(--raised); }
   <div class="kept-banner" id="kept-banner" hidden>
     <span>Viewing <strong id="kept-banner-count"></strong> kept post<span id="kept-banner-plural">s</span></span>
     <button class="ghost" id="exit-kept">Back to digging</button>
+  </div>
+
+  <!-- Same idea for the likes of whichever account is being dug: a full page of
+       the ordinary cards, not a second cramped list inside a dialog. -->
+  <div class="likes-banner" id="likes-banner" hidden>
+    <span>Liked by <strong id="likes-banner-handle"></strong><span id="likes-banner-count"></span></span>
+    <span class="banner-actions">
+      <button class="ghost" id="likes-more" hidden>More</button>
+      <button class="ghost" id="exit-likes">Back to digging</button>
+    </span>
   </div>
 
   <!-- tabindex="-1": focusable by script only, so a dig can move focus here

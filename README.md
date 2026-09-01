@@ -4,7 +4,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-2.8.0-black)]()
+[![Version](https://img.shields.io/badge/version-2.9.0-black)]()
 [![Status](https://img.shields.io/badge/status-Beta-yellow)]()
 [![Changelog](https://img.shields.io/badge/changelog-blue)](./CHANGELOG.md)
 
@@ -99,6 +99,11 @@ Four design consequences worth knowing:
   filter can be reached from the Index panel by searching for an account you
   haven't stumbled onto yet — it shows each account's post count and indexed
   date range, and survives a reload instead of reverting to global digging.
+- **Browse what an account has liked.** While digging one account, **Their
+  likes** walks that person's own `app.bsky.feed.like` records straight from
+  their PDS and renders the media posts among them as ordinary cards — a public
+  read that needs no account of your own, and a way into artwork by people you
+  don't follow yet. **More** keeps walking back through their likes.
 - **A local "kept" shelf.** Every find gets a star, alongside like/repost/
   bookmark, that holds it on this device and stops it from resurfacing — no
   sign-in required, so a signed-out visitor still has a way to hang onto
@@ -183,6 +188,7 @@ background while you browse.
 | **Allow repeats** | Include posts already surfaced |
 | **Include liked** | Re-admit posts you liked; reposts stay hidden either way |
 | **Click a handle** | Dig only that account until you Clear the filter |
+| **Their likes** | Browse the media posts the account you're digging has liked; **More** pages further back |
 | **Click an image** | Open it uncropped in an overlay; arrows or swipe page through the post |
 | **Play** | Load and play a video post's original file |
 | **Download** | Save the original file for that image or video |
@@ -196,24 +202,41 @@ background while you browse.
 `.github/workflows/pages.yml` typechecks, builds and deploys on every push to
 `main`. Enable it with **Settings → Pages → Source: GitHub Actions**.
 
+This deployment serves from the custom domain
+[`altostrata.spibane.com`](https://altostrata.spibane.com/), recorded in
+[`public/CNAME`](./public/CNAME) and set under **Settings → Pages → Custom
+domain**, with **Enforce HTTPS** on. The DNS side is one `CNAME` record for the
+`altostrata` label pointing at `spibane.github.io`. Nothing else in the build
+knows the URL: every path in the page is relative, so the same artifact serves
+correctly from a domain root or a `/REPO/` subpath.
+
 **One thing must be edited before OAuth works:**
 [`public/client-metadata.json`](./public/client-metadata.json) hard-codes the
 deployed URL, and the AT Protocol requires `client_id` to be the exact URL that
-serves that file. If your Pages URL is not
-`https://spibane.github.io/Altostrata/`, update all three fields:
+serves that file. If you are serving from anywhere other than
+`https://altostrata.spibane.com/`, update all three fields:
 
 ```json
 {
-  "client_id":     "https://YOUR.github.io/REPO/client-metadata.json",
-  "client_uri":    "https://YOUR.github.io/REPO/",
-  "redirect_uris": ["https://YOUR.github.io/REPO/"]
+  "client_id":     "https://YOUR.DOMAIN/client-metadata.json",
+  "client_uri":    "https://YOUR.DOMAIN/",
+  "redirect_uris": ["https://YOUR.DOMAIN/"]
 }
 ```
 
-The `scope` there must also match the scope requested in `src/session.ts`, or the
-authorization server rejects the request with `invalid_scope`. Local development
-needs none of this — a loopback origin builds its own client identity, so
-`npm run dev` on `127.0.0.1` can sign in as-is.
+`client_id` *is* the client's identity to every authorization server, so
+changing the domain makes this a different OAuth client: existing sessions stop
+being honoured and everyone signs in again. The `scope` there must also match
+the scope requested in `src/session.ts`, or the authorization server rejects the
+request with `invalid_scope`. Local development needs none of this — a loopback
+origin builds its own client identity, so `npm run dev` on `127.0.0.1` can sign
+in as-is.
+
+**Moving domains takes the index with nothing.** IndexedDB is scoped to an
+origin, so a visitor arriving at the new domain finds an empty index, an empty
+kept shelf and no seen state, even though the old URL redirects here. The Index
+panel's **Export** on the old origin and **Import** on the new one is the only
+route across.
 
 ## Development
 
