@@ -1,5 +1,16 @@
 # Changelog
 
+### v2.9.1 - 2026-10-28
+
+- **Signing in asks for only what Altostrata uses.** The OAuth scope drops
+  `transition:generic`, which granted the same reach as an app password —
+  posting, deleting posts, following, editing the profile — for granular
+  permissions: create and delete likes and reposts, and the four AppView calls
+  behind hydration and bookmarks (`getPosts`, `getBookmarks`,
+  `createBookmark`, `deleteBookmark`). The consent screen lists exactly those.
+  Anyone signed in has to sign in again once, since an existing session keeps
+  the scope it was granted with
+
 ### v2.9.0 - 2026-08-31
 
 - **See what a dug account has liked.** The "Digging @handle" row gains a

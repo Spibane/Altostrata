@@ -2,15 +2,29 @@ import { BrowserOAuthClient } from "@atproto/oauth-client-browser";
 import type { OAuthSession } from "@atproto/oauth-client";
 import { runThrottled, type Transport } from "./atproto.ts";
 
-/**
- * `transition:generic` is what currently grants repo writes. The finer-grained
- * scope system is still landing; when it does, this should narrow to just the
- * collections Altostrata writes.
- */
-const SCOPE = "atproto transition:generic";
-
 /** Authenticated app.bsky.* calls go through the PDS, which proxies to the AppView. */
 const APPVIEW_PROXY = "did:web:api.bsky.app#bsky_appview";
+
+/**
+ * Exactly what Altostrata does with an account: create and delete its own likes
+ * and reposts, and the four AppView calls below. `transition:generic` would also
+ * have let it post, delete posts, follow and edit the profile, none of which it
+ * ever does.
+ *
+ * Every authenticated call needs a scope here, or the PDS refuses it. Must match
+ * `scope` in public/client-metadata.json exactly; widening it means a fresh
+ * sign-in, since an existing session keeps the scopes it was granted with.
+ */
+const APPVIEW_AUD = APPVIEW_PROXY.replace("#", "%23");
+const SCOPE = [
+  "atproto",
+  "repo:app.bsky.feed.like?action=create&action=delete",
+  "repo:app.bsky.feed.repost?action=create&action=delete",
+  `rpc:app.bsky.feed.getPosts?aud=${APPVIEW_AUD}`,
+  `rpc:app.bsky.bookmark.getBookmarks?aud=${APPVIEW_AUD}`,
+  `rpc:app.bsky.bookmark.createBookmark?aud=${APPVIEW_AUD}`,
+  `rpc:app.bsky.bookmark.deleteBookmark?aud=${APPVIEW_AUD}`,
+].join(" ");
 
 const HANDLE_RESOLVER = "https://public.api.bsky.app";
 
@@ -32,7 +46,7 @@ function isLoopback(): boolean {
 /**
  * A loopback client needs no published document — the client_id *is* the
  * metadata, encoded as query parameters. The library's own builder omits `scope`,
- * which makes the server reject `transition:generic`, so the id is built here
+ * which makes the server reject anything beyond plain `atproto`, so the id is built here
  * instead. Redirects must use 127.0.0.1 rather than the `localhost` alias.
  */
 function loopbackClientMetadata(): ConstructorParameters<
